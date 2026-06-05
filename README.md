@@ -4,7 +4,7 @@
 
 ## 功能
 
-- **掃描報表(`scan`)**:對歌曲做四種偵測並輸出報表
+- **掃描報表(`scan`)**:對歌曲做四種偵測,整理成**單一 Markdown 報表**(各類別為 `##` 分節、附表格)
   - **可信重複**:同名同歌手,或 ISRC 相同(同一錄音)——可被自動去重
   - **同名不同歌手**:標題相同但歌手不同(多為巧合,僅供檢視)
   - **疑似重複(模糊比對)**:名稱相近,例如 remaster / live 版——**僅報告,不自動刪除**
@@ -14,7 +14,6 @@
   - 刪除前需**互動確認**(可用 `--yes` 略過)
   - 保留策略可選:`popularity`(預設,保留人氣最高)或 `oldest`(保留最早收藏)
 - **支援任意 playlist**:以 `--playlist <id>` 掃描指定歌單,預設為「我的最愛」
-- **多種輸出格式**:`md`(預設,Markdown 表格)、`txt`、`csv`、`json`
 
 ## 安裝
 
@@ -45,11 +44,11 @@ REDIRECT_URI=http://127.0.0.1:8888/callback
 ## 使用
 
 ```bash
-# 掃描「我的最愛」,輸出 Markdown 報表到 output/
+# 掃描「我的最愛」,輸出單一 Markdown 報表 spotify_report.md
 stm scan
 
-# 掃描指定 playlist,改輸出 csv
-stm scan --playlist 37i9dQZF1DXcBWIGoYBM5M --format csv
+# 掃描指定 playlist,並指定報表輸出路徑
+stm scan --playlist 37i9dQZF1DXcBWIGoYBM5M --output liked_dupes.md
 
 # 預覽去重計畫(不刪除任何東西)
 stm dedupe
@@ -75,7 +74,7 @@ src/stm/
   fetch.py      抓取歌曲(分頁)
   detect.py     重複 / 失效偵測(純邏輯)
   dedupe.py     保留策略與刪除計畫
-  writers.py    md / txt / csv / json 報表輸出
+  writers.py    單一 Markdown 報表輸出
 tests/          pytest 測試
 ```
 

@@ -6,7 +6,8 @@ __pycache__/
 # Environment variables
 .env
 
-# Output directories
+# 產生的報表
+spotify_report.md
 output/
 
 # IDE and editor files

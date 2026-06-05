@@ -36,13 +36,6 @@ _KEEP_DESCRIPTION = {
 }
 
 
-class OutputFormat(str, Enum):
-    md = "md"
-    txt = "txt"
-    csv = "csv"
-    json = "json"
-
-
 def _load_client():
     """建立已授權的 client(獨立函式以便測試時注入假物件)。"""
     return create_client(Settings())
@@ -68,38 +61,36 @@ _PlaylistOption = typer.Option(
 @app.command()
 def scan(
     playlist: str = _PlaylistOption,
-    fmt: OutputFormat = typer.Option(OutputFormat.md, "--format", "-f", help="輸出格式"),
-    output_dir: Path = typer.Option(
-        Path("output"), "--output-dir", "-o", envvar="OUTPUT_DIR", help="報表輸出目錄"
+    output: Path = typer.Option(
+        Path("spotify_report.md"),
+        "--output",
+        "-o",
+        envvar="OUTPUT_FILE",
+        help="報表輸出檔(單一 Markdown)",
     ),
 ):
-    """掃描歌曲,輸出各類報表(不刪除任何東西)。"""
+    """掃描歌曲,整理成單一 Markdown 報表(不刪除任何東西)。"""
     client = _load_client()
     tracks = _fetch_tracks(client, playlist)
     console.print(f"共取得 [bold]{len(tracks)}[/] 首歌曲")
 
-    confident = detect.find_confident_duplicates(tracks)
-    name_only = detect.find_name_only_duplicates(tracks)
-    fuzzy = detect.find_fuzzy_duplicates(tracks)
-    unplayable = detect.find_unplayable(tracks)
-
-    ext = fmt.value
-    reports = [
-        ("所有歌曲", tracks, f"all_tracks.{ext}"),
-        ("可信重複(同名同歌手 / 同 ISRC)", _flatten(confident), f"duplicate_confident.{ext}"),
-        ("同名不同歌手", _flatten(name_only), f"duplicate_name_only.{ext}"),
-        ("疑似重複(模糊比對,僅供檢視)", _flatten(fuzzy), f"duplicate_fuzzy.{ext}"),
-        ("已失效歌曲", unplayable, f"unplayable.{ext}"),
+    sections = [
+        ("所有歌曲", tracks),
+        ("可信重複(同名同歌手 / 同 ISRC)", _flatten(detect.find_confident_duplicates(tracks))),
+        ("同名不同歌手", _flatten(detect.find_name_only_duplicates(tracks))),
+        ("疑似重複(模糊比對,僅供檢視)", _flatten(detect.find_fuzzy_duplicates(tracks))),
+        ("已失效歌曲", detect.find_unplayable(tracks)),
     ]
+
+    writers.write_report(sections, output)
 
     table = Table(title="掃描結果")
     table.add_column("類別")
     table.add_column("數量", justify="right")
-    for header, items, filename in reports:
-        writers.write_tracks(items, output_dir / filename, fmt=ext, header=header)
-        table.add_row(header, str(len(items)))
+    for section_title, items in sections:
+        table.add_row(section_title, str(len(items)))
     console.print(table)
-    console.print(f"報表已寫入 [bold]{output_dir}[/]")
+    console.print(f"報表已寫入 [bold]{output}[/]")
 
 
 # --- dedupe ------------------------------------------------------------------

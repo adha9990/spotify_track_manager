@@ -42,17 +42,19 @@ def fake_client(monkeypatch):
     return client
 
 
-def test_scan_writes_report_files(fake_client, tmp_path):
-    result = runner.invoke(cli.app, ["scan", "--output-dir", str(tmp_path)])
+def test_scan_writes_single_markdown_report(fake_client, tmp_path):
+    report = tmp_path / "report.md"
+    result = runner.invoke(cli.app, ["scan", "--output", str(report)])
     assert result.exit_code == 0, result.output
-    # 預設輸出為 Markdown
-    assert (tmp_path / "all_tracks.md").exists()
-    assert (tmp_path / "duplicate_confident.md").exists()
-    assert (tmp_path / "unplayable.md").exists()
+    # 整理成一份 Markdown,各類別為 ## 分節
+    content = report.read_text(encoding="utf-8")
+    assert "## 所有歌曲" in content
+    assert "## 可信重複(同名同歌手 / 同 ISRC)" in content
+    assert "## 已失效歌曲" in content
 
 
 def test_scan_does_not_delete(fake_client, tmp_path):
-    runner.invoke(cli.app, ["scan", "--output-dir", str(tmp_path)])
+    runner.invoke(cli.app, ["scan", "--output", str(tmp_path / "report.md")])
     assert fake_client.removed == []
 
 
