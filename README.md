@@ -4,7 +4,7 @@
 
 ## 功能
 
-- **掃描報表(`scan`)**:對歌曲做四種偵測,整理成**單一 Markdown 報表**(各類別為 `##` 分節、附表格)
+- **掃描報表(`scan`)**:對歌曲做四種偵測,整理成**單一 HTML 報表**(各類別為頁籤、附表格,離線開啟即可)
   - **可信重複**:同名同歌手,或 ISRC 相同(同一錄音)——可被自動去重
   - **同名不同歌手**:標題相同但歌手不同(多為巧合,僅供檢視)
   - **疑似重複(模糊比對)**:名稱相近,例如 remaster / live 版——**僅報告,不自動刪除**
@@ -44,11 +44,11 @@ REDIRECT_URI=http://127.0.0.1:8888/callback
 ## 使用
 
 ```bash
-# 掃描「我的最愛」,輸出單一 Markdown 報表 spotify_report.md
+# 掃描「我的最愛」,輸出單一 HTML 報表 spotify_report.html
 stm scan
 
 # 掃描指定 playlist,並指定報表輸出路徑
-stm scan --playlist 37i9dQZF1DXcBWIGoYBM5M --output liked_dupes.md
+stm scan --playlist 37i9dQZF1DXcBWIGoYBM5M --output liked_dupes.html
 
 # 預覽去重計畫(不刪除任何東西)
 stm dedupe
@@ -74,7 +74,7 @@ src/stm/
   fetch.py      抓取歌曲(分頁)
   detect.py     重複 / 失效偵測(純邏輯)
   dedupe.py     保留策略與刪除計畫
-  writers.py    單一 Markdown 報表輸出
+  writers.py    單一 HTML 頁籤式報表輸出
 tests/          pytest 測試
 ```
 

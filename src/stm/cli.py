@@ -62,14 +62,14 @@ _PlaylistOption = typer.Option(
 def scan(
     playlist: str = _PlaylistOption,
     output: Path = typer.Option(
-        Path("spotify_report.md"),
+        Path("spotify_report.html"),
         "--output",
         "-o",
         envvar="OUTPUT_FILE",
-        help="報表輸出檔(單一 Markdown)",
+        help="報表輸出檔(單一 HTML)",
     ),
 ):
-    """掃描歌曲,整理成單一 Markdown 報表(不刪除任何東西)。"""
+    """掃描歌曲,整理成單一 HTML 頁籤式報表(不刪除任何東西)。"""
     client = _load_client()
     tracks = _fetch_tracks(client, playlist)
     console.print(f"共取得 [bold]{len(tracks)}[/] 首歌曲")

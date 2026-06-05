@@ -42,19 +42,21 @@ def fake_client(monkeypatch):
     return client
 
 
-def test_scan_writes_single_markdown_report(fake_client, tmp_path):
-    report = tmp_path / "report.md"
+def test_scan_writes_single_html_report(fake_client, tmp_path):
+    report = tmp_path / "report.html"
     result = runner.invoke(cli.app, ["scan", "--output", str(report)])
     assert result.exit_code == 0, result.output
-    # 整理成一份 Markdown,各類別為 ## 分節
+    # 整理成一份 HTML,各類別為頁籤
     content = report.read_text(encoding="utf-8")
-    assert "## 所有歌曲" in content
-    assert "## 可信重複(同名同歌手 / 同 ISRC)" in content
-    assert "## 已失效歌曲" in content
+    assert "<!doctype html>" in content
+    assert 'class="tab' in content
+    assert "所有歌曲" in content
+    assert "可信重複(同名同歌手 / 同 ISRC)" in content
+    assert "已失效歌曲" in content
 
 
 def test_scan_does_not_delete(fake_client, tmp_path):
-    runner.invoke(cli.app, ["scan", "--output", str(tmp_path / "report.md")])
+    runner.invoke(cli.app, ["scan", "--output", str(tmp_path / "report.html")])
     assert fake_client.removed == []
 
 
