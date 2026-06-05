@@ -6,16 +6,26 @@ from stm.models import Track
 from stm import dedupe
 
 
-def track(track_id, popularity=50, added_at="2020-01-01T00:00:00Z"):
+def track(track_id, popularity=50, added_at="2020-01-01T00:00:00Z", is_playable=True):
     return Track(
         id=track_id,
         name="Song",
         artists=("A",),
         isrc=None,
         popularity=popularity,
-        is_playable=True,
+        is_playable=is_playable,
         added_at=added_at,
     )
+
+
+def test_keep_prefers_playable_over_dead_even_if_lower_popularity():
+    group = [
+        track("dead", popularity=90, is_playable=False),  # 人氣高但失效
+        track("live", popularity=10, is_playable=True),
+    ]
+    plan = dedupe.plan_deletions([group], keep="popularity")
+    assert plan.resolutions[0].keep.id == "live"  # 保留可播放,即使人氣較低
+    assert [t.id for t in plan.resolutions[0].remove] == ["dead"]
 
 
 # --- 保留策略:popularity ----------------------------------------------------

@@ -73,6 +73,18 @@ def test_album_fields_default_safely_when_missing():
     assert track.duration_ms == 0
 
 
+def test_display_artists_joins_all():
+    track = Track.from_item(make_saved_item(artists=("邱鋒澤 Feng Ze", "艾薇 Ivy")))
+    assert track.display_artists == "邱鋒澤 Feng Ze, 艾薇 Ivy"
+    assert track.primary_artist == "邱鋒澤 Feng Ze"  # 分組仍用主要歌手
+
+
+def test_display_artists_empty_when_no_artists():
+    item = make_saved_item()
+    item["track"]["artists"] = []
+    assert Track.from_item(item).display_artists == ""
+
+
 def test_primary_artist_empty_when_no_artists():
     item = make_saved_item()
     item["track"]["artists"] = []

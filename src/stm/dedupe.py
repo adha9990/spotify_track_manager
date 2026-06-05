@@ -39,12 +39,12 @@ class DeletionPlan:
 
 
 def _popularity_key(track: Track):
-    # 取 min:人氣高者優先;同人氣時最早收藏優先;再以 id 確保確定性
-    return (-track.popularity, track.added_at or _MAX_SENTINEL, track.id)
+    # 取 min:可播放優先(絕不保留失效版而刪可播放版);再人氣高、最早收藏、id 確定性
+    return (not track.is_playable, -track.popularity, track.added_at or _MAX_SENTINEL, track.id)
 
 
 def _oldest_key(track: Track):
-    return (track.added_at or _MAX_SENTINEL, track.id)
+    return (not track.is_playable, track.added_at or _MAX_SENTINEL, track.id)
 
 
 _KEEP_STRATEGIES = {

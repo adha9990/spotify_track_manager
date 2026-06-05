@@ -3,7 +3,15 @@
 import pytest
 
 from stm.history import History
-from stm.server import create_app
+from stm.models import Track
+from stm.server import build_cleanup, build_sections, create_app
+
+
+def _t(track_id, name, artist, popularity=50, is_playable=True):
+    return Track(
+        id=track_id, name=name, artists=(artist,), isrc=None, popularity=popularity,
+        is_playable=is_playable, added_at=None,
+    )
 
 
 class FakeClient:
@@ -178,6 +186,27 @@ def test_search_needs_token_and_query():
     tc = create_app(FakeClient(), "<html>page</html>", "tok").test_client()
     assert _post(tc, "/api/search", {"query": "x"}, token=None).status_code == 403
     assert _post(tc, "/api/search", {"query": ""}).status_code == 400
+
+
+def test_build_sections_has_no_confident_tab():
+    titles = [s[0] for s in build_sections([_t("a", "Song", "A")])]
+    assert not any("可信重複" in t for t in titles)
+    assert any("已失效" in t for t in titles)
+
+
+def test_build_cleanup_merges_dups_and_dead_twins():
+    tracks = [
+        _t("keep", "Song", "A", popularity=90),
+        _t("dup", "Song", "A", popularity=10),          # 可信重複 → dup 可刪
+        _t("dead", "Gone", "B", is_playable=False),
+        _t("live", "Gone", "B"),                         # dead 有可播放替身 → dead 可刪
+        _t("lonely", "Solo", "C", is_playable=False),    # 失效無替身 → 不列入
+    ]
+    items = build_cleanup(tracks)
+    by_id = {i["id"]: i for i in items}
+    assert set(by_id) == {"dup", "dead"}
+    assert "重複" in by_id["dup"]["reason"]
+    assert "失效" in by_id["dead"]["reason"]
 
 
 def test_play_no_active_device_returns_message():

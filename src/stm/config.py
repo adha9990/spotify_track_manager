@@ -19,5 +19,7 @@ class Settings(BaseSettings):
         "user-library-read user-library-modify "
         "user-modify-playback-state user-read-playback-state"
     )
-    # 選填:web player 的 sp_dc cookie,設了才會抓非官方播放次數(serve)
+    # 選填:web player 的 sp_dc cookie,設了才會抓非官方播放次數 + 本地化名稱(serve)
     sp_dc: str | None = None
+    # 取本地化歌名 / 歌手用的語系(與你的 Spotify app 顯示一致);沿用 Accept-Language
+    locale: str = "zh-TW"

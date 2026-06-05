@@ -14,67 +14,160 @@ from .models import Track
 # section = (標題, 歌曲清單, 批量刪除 ids 或 None)
 Section = tuple[str, list[Track], list[str] | None]
 
+_FONTS = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link href="https://fonts.googleapis.com/css2?'
+    "family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,900;1,9..144,500&"
+    "family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap"
+    '" rel="stylesheet">'
+    '<link rel="stylesheet" '
+    'href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">'
+)
+
+# 視覺方向:Liner Notes —— 暖色印刷 / 雜誌索引感(Fraunces + Newsreader)
 _STYLE = """<style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, "Segoe UI", "Noto Sans TC", sans-serif;
-         margin: 2rem auto; max-width: 1040px; padding: 0 1rem; }
-  h1 { font-size: 1.4rem; margin-bottom: .5rem; }
-  #search { width: 100%; box-sizing: border-box; padding: .55rem .8rem; font-size: 1rem;
-            border: 1px solid #8886; border-radius: .5rem; margin-bottom: 1rem;
-            background: Canvas; color: inherit; }
-  .tabs { display: flex; flex-wrap: wrap; gap: .25rem; border-bottom: 2px solid #8884;
-          margin-bottom: 1rem; }
-  .tab { border: none; background: none; padding: .5rem .9rem; cursor: pointer;
-         font-size: .95rem; color: inherit; border-bottom: 2px solid transparent;
-         margin-bottom: -2px; }
-  .tab:hover { background: #8881; }
-  .tab.active { border-bottom-color: #1db954; font-weight: 600; }
-  .badge { display: inline-block; min-width: 1.2em; padding: 0 .4em; border-radius: 1em;
-           background: #1db954; color: #fff; font-size: .8rem; text-align: center; }
-  .sechead { display: flex; justify-content: space-between; align-items: center;
-             gap: 1rem; margin: .3rem 0 1rem; }
-  .count { color: #8a8a8a; }
-  .bulk { background: #e22; color: #fff; border: none; border-radius: .4rem;
-          padding: .5rem .9rem; cursor: pointer; font-size: .9rem; white-space: nowrap; }
-  .bulk:disabled { background: #8a8a8a; cursor: default; }
-  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
-  th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid #8883; }
-  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
-  th.sortable:hover { background: #8881; }
-  th.sortable[data-dir="asc"]::after { content: " ▲"; font-size: .75em; }
-  th.sortable[data-dir="desc"]::after { content: " ▼"; font-size: .75em; }
-  td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8) {
-    text-align: right; font-variant-numeric: tabular-nums; }
-  tbody tr:hover { background: #1db95418; }
-  #offline { position: fixed; top: 0; left: 0; right: 0; background: #e22; color: #fff;
-             text-align: center; padding: .6rem; font-size: .95rem; z-index: 10; }
-  .histbtn { background: none; border: 1px solid #8886; border-radius: .4rem;
-             padding: .35rem .7rem; cursor: pointer; color: inherit; font-size: .9rem;
-             margin-bottom: 1rem; }
-  #history { border: 1px solid #8884; border-radius: .5rem; padding: .5rem 1rem;
-             margin-bottom: 1rem; max-height: 16rem; overflow: auto; }
-  .hrow { display: flex; justify-content: space-between; align-items: center;
-          gap: 1rem; padding: .35rem 0; border-bottom: 1px solid #8882; }
+  :root {
+    --paper:#f6f1e7; --ink:#1b1714; --ink-soft:#6b5f54; --rule:#d8cdb9;
+    --accent:#bf3b1e; --accent-soft:#e9d9c5; --hi:#f4e3a6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--paper); color: var(--ink);
+    font-family: "Newsreader", Georgia, "Noto Serif TC", serif;
+    font-size: 16.5px; line-height: 1.5;
+    background-image:
+      radial-gradient(120% 80% at 100% 0, #efe6d4 0, transparent 60%),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/></svg>");
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 3rem 1.4rem 5rem; }
+  .kicker { font-size: .76rem; letter-spacing: .3em; text-transform: uppercase;
+            color: var(--accent); font-weight: 500; }
+  h1 { font-family: "Fraunces", serif; font-weight: 900; letter-spacing: -.01em;
+       font-size: clamp(2.4rem, 5.5vw, 3.6rem); line-height: .98; margin: .35rem 0 1.4rem; }
+  .toolbar { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
+  .histbtn, .cleanbtn { background: none; border: 1px solid var(--ink); color: var(--ink);
+             font-family: "Newsreader", serif; font-size: .85rem; letter-spacing: .04em;
+             padding: .4rem .9rem; border-radius: 999px; cursor: pointer; }
+  .histbtn:hover, .cleanbtn:hover { background: var(--ink); color: var(--paper); }
+  .cleanbtn { border-color: var(--accent); color: var(--accent); }
+  .cleanbtn:hover { background: var(--accent); color: var(--paper); }
+  .cleanbtn:disabled { border-color: var(--ink-soft); color: var(--ink-soft);
+                       cursor: default; background: none; }
+  #cleanup-modal { position: fixed; inset: 0; z-index: 20; background: rgba(27,23,20,.45);
+                   display: flex; align-items: center; justify-content: center; padding: 1rem; }
+  #cleanup-modal[hidden] { display: none; }  /* 讓 hidden 屬性蓋過上面的 display:flex */
+  .modal-card { background: var(--paper); border: 1px solid var(--ink); border-radius: .6rem;
+                max-width: 600px; width: 100%; max-height: 80vh; display: flex;
+                flex-direction: column; padding: 1.4rem; box-shadow: 0 20px 60px #0007; }
+  .modal-card h2 { font-family: "Fraunces", serif; margin: 0 0 .2rem; font-size: 1.5rem; }
+  .modal-sub { color: var(--ink-soft); margin: 0 0 1rem; }
+  .modal-list { overflow: auto; border-top: 1px solid var(--rule); }
+  .mrow { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem;
+          padding: .45rem 0; border-bottom: 1px solid var(--rule); }
+  .mrow small { color: var(--accent); font-style: italic; white-space: nowrap; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1rem; }
+  .modal-actions button { font-family: "Newsreader", serif; border: 1px solid var(--ink);
+          background: none; color: var(--ink); border-radius: 999px; padding: .4rem 1rem;
+          cursor: pointer; }
+  .modal-actions .danger { background: var(--accent); color: var(--paper); border-color: var(--accent); }
+  .modal-actions .danger:hover { background: #a32f15; }
+  #history { border: 1px solid var(--rule); border-radius: .4rem; padding: .4rem 1rem;
+             margin-bottom: 1.4rem; max-height: 16rem; overflow: auto; background: #fbf7ef; }
+  .hrow { display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+          padding: .45rem 0; border-bottom: 1px solid var(--rule); }
   .hrow:last-child { border-bottom: none; }
-  .hrow button { border: 1px solid #8886; background: none; color: inherit;
-                 border-radius: .3rem; padding: .2rem .6rem; cursor: pointer; }
-  .hrow button:disabled { opacity: .5; cursor: default; }
-  .hrow .undone { color: #1db954; font-size: .85rem; }
-  mark { background: #ffd54a; color: #000; border-radius: .15em; }
-  .play, .del, .repl-btn { border: none; background: none; cursor: pointer; font-size: 1rem;
-                padding: .1rem .4rem; border-radius: .3rem; }
-  .play:hover { background: #1db95433; }
-  .del:hover { background: #e2222233; }
-  .repl-btn:hover { background: #8882; }
-  tr.repl td { background: #8881; }
-  .rq { padding: .35rem .5rem; min-width: 18rem; }
-  .results { margin-top: .5rem; }
-  .rrow { display: flex; justify-content: space-between; align-items: center;
-          gap: 1rem; padding: .25rem 0; }
-  .rrow small { color: #8a8a8a; }
+  .hrow button { border: 1px solid var(--ink); background: none; color: var(--ink);
+                 border-radius: 999px; padding: .15rem .8rem; cursor: pointer; font-family: inherit; }
+  .hrow button:hover { background: var(--ink); color: var(--paper); }
+  .hrow button:disabled { opacity: .4; cursor: default; }
+  .hrow .undone { color: var(--accent); font-size: .85rem; font-style: italic; }
+
+  #search { width: 100%; background: transparent; border: none; border-bottom: 1px solid var(--rule);
+            font-family: "Fraunces", serif; font-size: 1.5rem; color: var(--ink);
+            padding: .3rem 0 .55rem; margin-bottom: .4rem; }
+  #search::placeholder { color: #bcae98; font-style: italic; }
+  #search:focus { outline: none; border-bottom-color: var(--accent); }
+
+  .tabs { display: flex; flex-wrap: wrap; gap: 1.6rem; align-items: baseline;
+          margin: 1.5rem 0 .2rem; border-bottom: 2px solid var(--ink); padding-bottom: .8rem; }
+  .tab { border: none; background: none; cursor: pointer; color: var(--ink-soft);
+         font-family: "Fraunces", serif; font-size: 1.04rem; padding: 0 0 .2rem; position: relative; }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--ink); }
+  .tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -10px;
+                       height: 2px; background: var(--accent); }
+  .badge { font-family: "Newsreader", serif; font-size: .72rem; color: var(--accent);
+           vertical-align: super; margin-left: .15rem; letter-spacing: .05em; }
+
+  .sechead { display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+             margin: 1rem 0; }
+  .count { font-size: .78rem; letter-spacing: .2em; text-transform: uppercase; color: var(--ink-soft); }
+  .bulk { background: var(--accent); color: var(--paper); border: none; border-radius: 999px;
+          font-family: "Newsreader", serif; padding: .45rem 1rem; cursor: pointer;
+          font-size: .85rem; white-space: nowrap; letter-spacing: .02em; }
+  .bulk:hover { background: #a32f15; }
+  .bulk:disabled { background: var(--ink-soft); cursor: default; }
+
+  table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+  thead th { font-family: "Newsreader", serif; font-style: italic; font-weight: 500;
+             color: var(--ink-soft); text-align: left; font-size: .85rem;
+             padding: .35rem .6rem; border-bottom: 1px solid var(--ink); }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--accent); }
+  th.sortable[data-dir="asc"]::after { content: " ▲"; font-size: .7em; font-style: normal; }
+  th.sortable[data-dir="desc"]::after { content: " ▼"; font-size: .7em; font-style: normal; }
+  tbody td { padding: .6rem .6rem; border-bottom: 1px solid var(--rule); vertical-align: baseline; }
+  td:nth-child(2) { font-weight: 500; }
+  td:nth-child(3), td:nth-child(4) { color: var(--ink-soft); }
+  td:nth-child(4) { font-style: italic; }
+  td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8) {
+    font-variant-numeric: tabular-nums; color: var(--ink-soft); }  /* 靠左,與文字欄一致 */
+  /* 年 / 時長 / 人氣 / 播放次數 / 收藏日:固定格式,永不換行(擠壓由文字欄吸收) */
+  td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8), td:nth-child(9),
+  th:nth-child(5), th:nth-child(6), th:nth-child(7), th:nth-child(8), th:nth-child(9) {
+    white-space: nowrap; }
+  td:nth-child(9) { color: var(--ink-soft); }
+  tbody tr { animation: rise .5s both; }
+  tbody tr:nth-child(1){animation-delay:.02s} tbody tr:nth-child(2){animation-delay:.05s}
+  tbody tr:nth-child(3){animation-delay:.08s} tbody tr:nth-child(4){animation-delay:.11s}
+  tbody tr:nth-child(5){animation-delay:.14s} tbody tr:nth-child(6){animation-delay:.17s}
+  tbody tr:nth-child(7){animation-delay:.2s}  tbody tr:nth-child(8){animation-delay:.23s}
+  @keyframes rise { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform:none; } }
+  tbody tr:hover { background: var(--accent-soft); }
+  mark { background: var(--hi); color: var(--ink); padding: 0 .05em; }
+
+  .acts { display: flex; gap: .35rem; align-items: center; justify-content: flex-end;
+          white-space: nowrap; }
+  .play, .del { border: none; background: none; cursor: pointer; font-size: .9rem;
+            color: var(--ink); opacity: .5; padding: .25rem .4rem; border-radius: .3rem;
+            line-height: 1; transition: .15s; }
+  .play:hover, .del:hover { opacity: 1; }
+  .del:hover { color: var(--accent); }
+  .repl-row { cursor: pointer; }
+  .repl-row:hover { background: var(--accent-soft); }
+  .chev { color: var(--ink-soft); font-size: .7rem; transition: transform .15s; }
+  .repl-row.open .chev { transform: rotate(180deg); }
+
+  tr.repl td { background: #efe6d4; padding: .5rem 1rem .9rem; }
+  .results { display: flex; flex-direction: column; gap: .1rem; }
+  .results .loading { color: var(--ink-soft); font-style: italic; }
+  .rrow { display: flex; align-items: center; gap: .7rem; padding: .35rem 0;
+          border-bottom: 1px solid var(--rule); }
+  .rrow:last-child { border-bottom: none; }
+  .rrow .rname { flex: 1; }
+  .rrow small { color: var(--ink-soft); font-style: italic; }
+  .addbtn { border: 1px solid var(--ink); background: none; color: var(--ink);
+            border-radius: 999px; padding: .12rem .9rem; cursor: pointer; font-family: inherit; }
+  .addbtn:hover { background: var(--ink); color: var(--paper); }
+  .addbtn:disabled { opacity: .4; cursor: default; }
+
+  #offline { position: fixed; top: 0; left: 0; right: 0; background: var(--accent);
+             color: var(--paper); text-align: center; padding: .6rem;
+             font-size: .9rem; letter-spacing: .04em; z-index: 10; }
   #toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
-           background: #222; color: #fff; padding: .6rem 1rem; border-radius: .5rem;
-           opacity: 0; transition: opacity .2s; pointer-events: none; }
+           background: var(--ink); color: var(--paper); padding: .6rem 1.1rem; border-radius: 999px;
+           font-size: .9rem; opacity: 0; transition: opacity .2s; pointer-events: none; }
   #toast.show { opacity: 1; }
 </style>"""
 
@@ -105,23 +198,24 @@ def _pc_cell(playcounts: dict[str, int], track_id: str) -> str:
 
 def _row(track: Track, order: int, playcounts: dict[str, int], replaceable: bool) -> str:
     tid = _esc(track.id)
-    name, artist, album = _esc(track.name), _esc(track.primary_artist), _esc(track.album)
+    name, artist, album = _esc(track.name), _esc(track.display_artists), _esc(track.album)
     year, added = _year(track.release_date), _date(track.added_at)
-    replace_btn = (
-        '<button class="repl-btn" title="找平替" onclick="findReplacement(this)">🔁</button>'
-        if replaceable
-        else ""
-    )
+    # 已失效列:整列可點開「相關替代版」下拉(按鈕點擊不觸發,見 toggleReplacements)
+    row_open = ' class="repl-row" onclick="toggleReplacements(this, event)"' if replaceable else ""
+    chev = '<i class="fa-solid fa-chevron-down chev"></i>' if replaceable else ""
     return (
-        f'<tr data-id="{tid}" data-order="{order}">'
-        f'<td><button class="play" title="播放" onclick="play(\'{tid}\')">▶</button></td>'
+        f"<tr data-id=\"{tid}\" data-order=\"{order}\"{row_open}>"
+        f'<td><button class="play" title="播放" onclick="play(\'{tid}\')">'
+        '<i class="fa-solid fa-play"></i></button></td>'
         f'<td data-sort="{name}">{name}</td><td data-sort="{artist}">{artist}</td>'
         f'<td data-sort="{album}">{album}</td><td data-sort="{year}">{year}</td>'
         f'<td data-sort="{track.duration_ms}">{_duration(track.duration_ms)}</td>'
         f'<td data-sort="{track.popularity}">{track.popularity}</td>'
         f"{_pc_cell(playcounts, track.id)}"
         f'<td data-sort="{added}">{added}</td>'
-        f'<td>{replace_btn}<button class="del" title="刪除" onclick="del(\'{tid}\')">🗑</button></td>'
+        f'<td><div class="acts">{chev}'
+        f'<button class="del" title="刪除" onclick="del(\'{tid}\')">'
+        '<i class="fa-solid fa-trash"></i></button></div></td>'
         "</tr>"
     )
 
@@ -148,15 +242,19 @@ def _section_header(count: int, bulk_ids: list[str] | None) -> str:
         ids = _esc(",".join(bulk_ids))
         bulk_html = (
             f'<button class="bulk" data-ids="{ids}" onclick="bulkDelete(this)">'
-            f"一鍵刪除可信重複(將刪 {len(bulk_ids)} 首,每組保留人氣最高)</button>"
+            f'<i class="fa-solid fa-broom"></i> 一鍵刪除可信重複'
+            f"(將刪 {len(bulk_ids)} 首,每組保留人氣最高)</button>"
         )
     return f'<div class="sechead">{count_html}{bulk_html}</div>'
 
 
-def _script(token: str) -> str:
+def _script(token: str, cleanup: list[dict]) -> str:
+    # 避免歌名含 </script> 破壞嵌入
+    cleanup_json = json.dumps(cleanup, ensure_ascii=False).replace("</", "<\\/")
     return (
         "<script>\n"
         f"const TOKEN = {json.dumps(token)};\n"
+        f"const CLEANUP = {cleanup_json};\n"
         """
 function showTab(i) {
   document.querySelectorAll('.panel').forEach((p, j) => { p.hidden = j !== i; });
@@ -211,6 +309,27 @@ async function undoBatch(batchId, btn) {
     location.reload();
   } catch (e) { toast('復原失敗:' + e.message); }
 }
+function openCleanup() {
+  if (!CLEANUP.length) { toast('沒有可過濾的歌曲'); return; }
+  const list = document.querySelector('#cleanup-modal .modal-list');
+  list.innerHTML = CLEANUP.map(c =>
+    `<div class="mrow"><span>${esc(c.name)} — ${esc(c.artist)}</span><small>${esc(c.reason)}</small></div>`
+  ).join('');
+  document.querySelector('#cleanup-modal .modal-go').textContent = '確定刪除 ' + CLEANUP.length + ' 首';
+  document.getElementById('cleanup-modal').hidden = false;
+}
+function closeCleanup() { document.getElementById('cleanup-modal').hidden = true; }
+async function confirmCleanup() {
+  const ids = CLEANUP.map(c => c.id);
+  try {
+    await api('/api/delete', { track_ids: ids });
+    removeRows(ids);
+    closeCleanup();
+    const btn = document.querySelector('.cleanbtn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-check"></i> 已過濾'; }
+    toast('已過濾 ' + ids.length + ' 首(可從操作歷史復原)');
+  } catch (e) { toast('過濾失敗:' + e.message); }
+}
 function refreshCounts() {
   document.querySelectorAll('.panel').forEach((panel, i) => {
     const n = panel.querySelectorAll('tbody tr').length;
@@ -228,42 +347,40 @@ async function play(id) {
   catch (e) { toast('播放失敗:' + e.message); }
 }
 async function del(id) {
+  const row = document.querySelector('tr[data-id="' + CSS.escape(id) + '"]');
+  const name = row ? row.cells[1].textContent : '這首歌';
+  if (!confirm('確定從收藏刪除「' + name + '」?')) return;  // 防呆
   try { await api('/api/delete', { track_ids: [id] }); removeRows([id]); toast('已刪除'); }
   catch (e) { toast('刪除失敗:' + e.message); }
 }
-function findReplacement(btn) {
-  const row = btn.closest('tr');
+// 點失效列 → 展開下拉,自動以「歌名 歌手」搜尋並直接列出 5 筆相關替代版
+function toggleReplacements(row, ev) {
+  if (ev && ev.target.closest('button')) return;  // 列上的播放/刪除鈕不觸發展開
   const next = row.nextElementSibling;
-  if (next && next.classList.contains('repl')) { next.remove(); return; }  // 再點收合
+  if (next && next.classList.contains('repl')) { next.remove(); row.classList.remove('open'); return; }
+  row.classList.add('open');
   const name = row.cells[1].textContent, artist = row.cells[2].textContent;
   const deadId = row.dataset.id;
   const tr = document.createElement('tr');
   tr.className = 'repl';
   const td = document.createElement('td');
   td.colSpan = row.cells.length;
-  td.innerHTML = '<input class="rq" type="search"> <button class="rgo">搜尋</button>'
-               + '<div class="results"></div>';
+  td.innerHTML = '<div class="results"><span class="loading">搜尋相關替代版…</span></div>';
   tr.appendChild(td); row.after(tr);
-  const input = td.querySelector('.rq');
-  const box = td.querySelector('.results');
-  input.value = name + ' ' + artist;            // 用 property 設值,免去屬性跳脫
-  const run = () => replSearch(input, box, deadId);
-  td.querySelector('.rgo').onclick = run;
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
-  run();
+  loadReplacements(td.querySelector('.results'), (name + ' ' + artist).trim(), deadId);
 }
-async function replSearch(input, box, deadId) {
-  box.textContent = '搜尋中…';
+async function loadReplacements(box, query, deadId) {
   try {
-    const { results } = await api('/api/search', { query: input.value });
-    if (!results.length) { box.textContent = '找不到結果'; return; }
-    box.innerHTML = results.map(r =>
-      '<div class="rrow"><span>' + esc(r.name) + ' — ' + esc(r.artist)
-      + ' <small>' + esc(r.album) + '</small></span>'
-      + '<button data-id="' + r.id + '" data-dead="' + deadId
-      + '" onclick="addReplacement(this)">加入</button></div>'
-    ).join('');
-  } catch (e) { box.textContent = '搜尋失敗:' + e.message; }
+    const { results } = await api('/api/search', { query });
+    const five = results.slice(0, 5);
+    if (!five.length) { box.innerHTML = '<span class="loading">找不到相關歌曲</span>'; return; }
+    box.innerHTML = five.map(r => `
+      <div class="rrow">
+        <button class="play" title="播放" data-id="${esc(r.id)}" onclick="play(this.dataset.id)"><i class="fa-solid fa-play"></i></button>
+        <span class="rname">${esc(r.name)} — ${esc(r.artist)} <small>${esc(r.album)}</small></span>
+        <button class="addbtn" data-id="${esc(r.id)}" data-dead="${esc(deadId)}" onclick="addReplacement(this)">加入</button>
+      </div>`).join('');
+  } catch (e) { box.innerHTML = '<span class="loading">搜尋失敗:' + esc(e.message) + '</span>'; }
 }
 async function addReplacement(btn) {
   const trackId = btn.dataset.id, deadId = btn.dataset.dead;
@@ -375,9 +492,12 @@ def render(
     token: str,
     title: str = "Spotify 收藏報表",
     playcounts: dict[str, int] | None = None,
+    cleanup: list[dict] | None = None,
 ) -> str:
-    """產生互動式 HTML 頁面字串。playcounts 缺的歌顯示為 —。"""
+    """產生互動式 HTML 頁面字串。playcounts 缺的歌顯示為 —;cleanup 餵「一鍵過濾」。"""
     playcounts = playcounts or {}
+    cleanup = cleanup or []
+    clean_attr = "" if cleanup else " disabled"
     tabs, panels = [], []
     for i, section in enumerate(sections):
         section_title, tracks, bulk_ids = section[0], section[1], section[2]
@@ -397,15 +517,31 @@ def render(
     return (
         '<!doctype html>\n<html lang="zh-Hant">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        f"<title>{_esc(title)}</title>\n{_STYLE}\n</head>\n<body>\n"
+        f"<title>{_esc(title)}</title>\n{_FONTS}\n{_STYLE}\n</head>\n<body>\n"
         '<div id="offline" hidden>與伺服器失去連線,嘗試重新連線中…</div>\n'
+        '<div class="wrap">\n'
+        '<div class="kicker">Spotify · Library Almanac</div>\n'
         f"<h1>{_esc(title)}</h1>\n"
-        '<button class="histbtn" onclick="toggleHistory()">↩ 操作歷史</button>\n'
+        '<div class="toolbar">'
+        '<button class="histbtn" onclick="toggleHistory()">'
+        '<i class="fa-solid fa-clock-rotate-left"></i> 操作歷史</button>'
+        f'<button class="cleanbtn" onclick="openCleanup()"{clean_attr}>'
+        f'<i class="fa-solid fa-broom"></i> 一鍵過濾 ({len(cleanup)})</button>'
+        "</div>\n"
         '<div id="history" hidden></div>\n'
         '<input id="search" type="search" placeholder="搜尋歌名或歌手…" '
         'oninput="search()" autocomplete="off">\n'
         f'<div class="tabs">{"".join(tabs)}</div>\n'
         f'<div class="panels">{"".join(panels)}</div>\n'
+        "</div>\n"
         '<div id="toast"></div>\n'
-        f"{_script(token)}\n</body>\n</html>\n"
+        '<div id="cleanup-modal" hidden><div class="modal-card">'
+        "<h2>一鍵過濾</h2>"
+        '<p class="modal-sub">以下歌曲將從收藏移除(可從「操作歷史」復原):</p>'
+        '<div class="modal-list"></div>'
+        '<div class="modal-actions">'
+        '<button onclick="closeCleanup()">取消</button>'
+        '<button class="modal-go danger" onclick="confirmCleanup()">確定刪除</button>'
+        "</div></div></div>\n"
+        f"{_script(token, cleanup)}\n</body>\n</html>\n"
     )

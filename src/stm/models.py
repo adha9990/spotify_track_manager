@@ -26,7 +26,13 @@ class Track:
 
     @property
     def primary_artist(self) -> str:
+        """主要歌手(用於分組 / 去重),取第一位。"""
         return self.artists[0] if self.artists else ""
+
+    @property
+    def display_artists(self) -> str:
+        """顯示用:所有合唱歌手,以逗號相連。"""
+        return ", ".join(self.artists)
 
     @classmethod
     def from_item(cls, item: dict) -> Track:

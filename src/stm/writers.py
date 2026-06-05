@@ -52,7 +52,7 @@ def _esc(text) -> str:
 
 def _table(tracks: list[Track]) -> str:
     rows = "".join(
-        f"<tr><td>{_esc(t.name)}</td><td>{_esc(t.primary_artist)}</td>"
+        f"<tr><td>{_esc(t.name)}</td><td>{_esc(t.display_artists)}</td>"
         f"<td>{t.popularity}</td><td><code>{_esc(t.id)}</code></td></tr>"
         for t in tracks
     )

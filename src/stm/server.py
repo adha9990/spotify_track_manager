@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import secrets
 import webbrowser
 
@@ -148,20 +149,51 @@ def _fetch_tracks(client, playlist: str | None) -> list[Track]:
     return fetch.fetch_saved_tracks(client)
 
 
+def _localize(track: Track, data: dict | None) -> Track:
+    """用 Pathfinder 取得的本地化(中文)歌名/歌手/專輯覆寫;抓不到則保留官方。"""
+    if not data:
+        return track
+    return dataclasses.replace(
+        track,
+        name=data.get("name") or track.name,
+        artists=tuple(data.get("artists")) or track.artists,
+        album=data.get("album") or track.album,
+    )
+
+
 def build_sections(tracks: list[Track]) -> list[webpage.Section]:
-    """組出頁面的 5 個分節;可信重複節帶「保留人氣最高」的刪除清單。"""
+    """組出頁面分節;可信重複改由頂端「一鍵過濾」處理,故不再是 tab。"""
     def flatten(groups):
         return [t for group in groups for t in group]
 
-    confident = detect.find_confident_duplicates(tracks)
-    plan = plan_deletions(confident, keep="popularity")
     return [
         ("所有歌曲", tracks, None),
-        ("可信重複(同名同歌手 / 同 ISRC)", flatten(confident), plan.delete_ids),
         ("同名不同歌手", flatten(detect.find_name_only_duplicates(tracks)), None),
         ("疑似重複(模糊比對,僅供檢視)", flatten(detect.find_fuzzy_duplicates(tracks)), None),
         ("已失效歌曲", detect.find_unplayable(tracks), None, True),  # 可找平替
     ]
+
+
+def build_cleanup(tracks: list[Track]) -> list[dict]:
+    """一鍵過濾清單:可信重複每組保留一首(優先可播放、再人氣最高),刪其餘。
+
+    逐首標原因——失效版被刪且保留的是可播放版時標「已失效有替身」,其餘標「重複」。
+    回傳 [{id, name, artist, reason}]。
+    """
+    items: list[dict] = []
+    for group in detect.find_confident_duplicates(tracks):
+        resolution = plan_deletions([group], keep="popularity").resolutions[0]
+        keep = resolution.keep
+        for t in resolution.remove:
+            reason = (
+                "已失效,且已有可播放的同名同歌手版本"
+                if not t.is_playable and keep.is_playable
+                else "重複(已保留同組人氣最高者)"
+            )
+            items.append(
+                {"id": t.id, "name": t.name, "artist": t.display_artists, "reason": reason}
+            )
+    return items
 
 
 def serve(
@@ -173,15 +205,19 @@ def serve(
     settings = Settings()
     client = create_client(settings)
     tracks = _fetch_tracks(client, playlist)
-    sections = build_sections(tracks)
     if settings.sp_dc:
-        print("正在抓取播放次數(非官方,可能需數十秒;失敗則該欄留白)…")
-    counts = playcount.fetch_playcounts(tracks, sp_dc=settings.sp_dc)
+        print("正在透過 cookie 取播放次數 + 本地化名稱(可能需數十秒;失敗則降位用官方資料)…")
+    data = playcount.fetch_track_data(tracks, sp_dc=settings.sp_dc, locale=settings.locale)
+    tracks = [_localize(t, data.get(t.id)) for t in tracks]  # 中文名覆寫,抓不到保留官方
+
+    sections = build_sections(tracks)
+    cleanup = build_cleanup(tracks)
+    counts = {tid: d["playcount"] for tid, d in data.items() if d.get("playcount") is not None}
     token = secrets.token_urlsafe(16)
-    page = webpage.render(sections, token, playcounts=counts)
+    page = webpage.render(sections, token, playcounts=counts, cleanup=cleanup)
 
     history = History("stm_history.db")
-    tracks_by_id = {t.id: {"name": t.name, "artist": t.primary_artist} for t in tracks}
+    tracks_by_id = {t.id: {"name": t.name, "artist": t.display_artists} for t in tracks}
     app = create_app(client, page, token, history=history, tracks_by_id=tracks_by_id)
     url = f"http://127.0.0.1:{port}"
     print(f"互動報表已啟動:{url}(按 Ctrl+C 結束)")

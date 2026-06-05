@@ -130,16 +130,36 @@ def test_headers_are_sortable():
     assert "data-sort=" in html
 
 
-def test_replaceable_section_has_find_replacement_button():
+def test_unplayable_rows_open_replacements_on_click():
     html = webpage.render([("已失效", [track()], None, True)], token="tok")
-    assert "findReplacement" in html
-    assert "🔁" in html
+    assert 'onclick="toggleReplacements(this, event)"' in html  # 點列展開
     assert "/api/search" in html
+    assert "fa-chevron-down" in html  # 展開提示圖示
+    assert "🔁" not in html  # 不再有找平替按鈕
 
 
-def test_non_replaceable_section_has_no_replace_button():
+def test_normal_rows_are_not_clickable_for_replacement():
     html = webpage.render([("所有歌曲", [track()], None)], token="tok")
-    assert "🔁" not in html
+    assert "toggleReplacements(this" not in html  # 一般列不可點展開
+
+
+def test_cleanup_button_and_modal_with_reasons():
+    html = webpage.render(
+        [("所有歌曲", [track()], None)], token="tok",
+        cleanup=[{"id": "x", "name": "N", "artist": "A", "reason": "重複(已保留同組人氣最高者)"}],
+    )
+    assert 'onclick="openCleanup()"' in html
+    assert 'id="cleanup-modal"' in html
+    assert "#cleanup-modal[hidden]" in html  # 載入時 modal 須隱藏(hidden 要蓋過 display)
+    assert "function openCleanup" in html
+    assert "一鍵過濾 (1)" in html
+    assert "重複(已保留同組人氣最高者)" in html  # 原因嵌入供 dialog 顯示
+
+
+def test_cleanup_button_disabled_when_nothing_to_filter():
+    html = webpage.render([("所有歌曲", [track()], None)], token="tok", cleanup=[])
+    assert "一鍵過濾 (0)" in html
+    assert 'onclick="openCleanup()" disabled' in html
 
 
 def test_has_history_panel_and_undo():
