@@ -19,6 +19,10 @@ class Track:
     popularity: int
     is_playable: bool
     added_at: str | None
+    album: str = ""
+    album_id: str = ""
+    release_date: str | None = None
+    duration_ms: int = 0
 
     @property
     def primary_artist(self) -> str:
@@ -29,6 +33,7 @@ class Track:
         """從 saved-tracks / playlist 端點的 item 包裝({added_at, track})建立。"""
         track = item.get("track") or {}
         external_ids = track.get("external_ids") or {}
+        album = track.get("album") or {}
         return cls(
             id=track.get("id"),
             name=track.get("name", ""),
@@ -38,4 +43,8 @@ class Track:
             # 欄位缺失代表 API 未提供(未帶 market),視為可播放而非失效
             is_playable=track.get("is_playable", True),
             added_at=item.get("added_at"),
+            album=album.get("name", ""),
+            album_id=album.get("id", ""),
+            release_date=album.get("release_date"),
+            duration_ms=track.get("duration_ms", 0),
         )

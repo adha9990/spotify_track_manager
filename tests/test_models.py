@@ -51,6 +51,28 @@ def test_extracts_added_at():
     assert track.added_at == "2021-06-05T12:00:00Z"
 
 
+def test_extracts_album_release_date_and_duration():
+    track = Track.from_item(
+        make_saved_item(
+            album="Abbey Road", album_id="alb42", release_date="1969-09-26", duration_ms=259000
+        )
+    )
+    assert track.album == "Abbey Road"
+    assert track.album_id == "alb42"
+    assert track.release_date == "1969-09-26"
+    assert track.duration_ms == 259000
+
+
+def test_album_fields_default_safely_when_missing():
+    item = make_saved_item()
+    del item["track"]["album"]
+    del item["track"]["duration_ms"]
+    track = Track.from_item(item)
+    assert track.album == ""
+    assert track.release_date is None
+    assert track.duration_ms == 0
+
+
 def test_primary_artist_empty_when_no_artists():
     item = make_saved_item()
     item["track"]["artists"] = []

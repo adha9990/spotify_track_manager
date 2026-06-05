@@ -14,7 +14,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import detect, fetch, writers
+from . import detect, fetch, server, writers
 from .client import create_client
 from .config import Settings
 from .dedupe import execute_deletions, plan_deletions
@@ -91,6 +91,18 @@ def scan(
         table.add_row(section_title, str(len(items)))
     console.print(table)
     console.print(f"報表已寫入 [bold]{output}[/]")
+
+
+# --- serve -------------------------------------------------------------------
+
+
+@app.command()
+def serve(
+    playlist: str = _PlaylistOption,
+    port: int = typer.Option(8765, "--port", help="本機伺服器埠號"),
+):
+    """啟動本機互動網頁:可逐首播放 / 刪除,並一鍵去除可信重複(播放需 Premium)。"""
+    server.serve(playlist=playlist, port=port)
 
 
 # --- dedupe ------------------------------------------------------------------

@@ -95,6 +95,14 @@ def test_dedupe_apply_aborts_when_exceeding_max_deletions(fake_client):
     assert fake_client.removed == []
 
 
+def test_serve_invokes_server_with_options(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(cli.server, "serve", lambda **kw: calls.update(kw))
+    result = runner.invoke(cli.app, ["serve", "--port", "9000", "--playlist", "abc"])
+    assert result.exit_code == 0, result.output
+    assert calls == {"playlist": "abc", "port": 9000}
+
+
 def test_dedupe_apply_two_independent_groups_both_resolved(monkeypatch):
     items = [
         make_saved_item(track_id="g1_low", name="Alpha", artists=("A",), popularity=10, isrc="ISRC1"),

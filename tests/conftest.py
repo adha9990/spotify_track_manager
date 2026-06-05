@@ -10,6 +10,10 @@ def make_raw_track(
     popularity=50,
     isrc=None,
     is_playable=None,
+    album="Some Album",
+    album_id="alb1",
+    release_date="2020-01-01",
+    duration_ms=200000,
 ):
     """產生一個模擬 Spotify API 回傳的 track dict。
 
@@ -20,6 +24,8 @@ def make_raw_track(
         "name": name,
         "artists": [{"name": a} for a in artists],
         "popularity": popularity,
+        "album": {"name": album, "id": album_id, "release_date": release_date},
+        "duration_ms": duration_ms,
     }
     if isrc is not None:
         track["external_ids"] = {"isrc": isrc}

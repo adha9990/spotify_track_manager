@@ -10,6 +10,9 @@ __pycache__/
 spotify_report.html
 output/
 
+# 操作歷史 SQLite
+stm_history.db
+
 # IDE and editor files
 .vscode/
 .idea/

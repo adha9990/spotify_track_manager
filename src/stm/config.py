@@ -15,4 +15,9 @@ class Settings(BaseSettings):
     client_id: str
     client_secret: str
     redirect_uri: str = "http://127.0.0.1:8888/callback"
-    scope: str = "user-library-read user-library-modify"
+    scope: str = (
+        "user-library-read user-library-modify "
+        "user-modify-playback-state user-read-playback-state"
+    )
+    # 選填:web player 的 sp_dc cookie,設了才會抓非官方播放次數(serve)
+    sp_dc: str | None = None
