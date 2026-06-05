@@ -37,6 +37,7 @@ _KEEP_DESCRIPTION = {
 
 
 class OutputFormat(str, Enum):
+    md = "md"
     txt = "txt"
     csv = "csv"
     json = "json"
@@ -67,7 +68,7 @@ _PlaylistOption = typer.Option(
 @app.command()
 def scan(
     playlist: str = _PlaylistOption,
-    fmt: OutputFormat = typer.Option(OutputFormat.txt, "--format", "-f", help="輸出格式"),
+    fmt: OutputFormat = typer.Option(OutputFormat.md, "--format", "-f", help="輸出格式"),
     output_dir: Path = typer.Option(
         Path("output"), "--output-dir", "-o", envvar="OUTPUT_DIR", help="報表輸出目錄"
     ),

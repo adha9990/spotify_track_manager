@@ -41,6 +41,34 @@ def test_csv_has_header_and_data_row(tmp_path):
     assert rows[0]["isrc"] == "GB1234567890"
 
 
+def test_md_has_heading_count_and_table(tmp_path):
+    path = tmp_path / "out.md"
+    writers.write_tracks([track()], path, fmt="md", header="重複歌曲")
+    content = path.read_text(encoding="utf-8")
+    assert "# 重複歌曲" in content
+    assert "共 1 首歌曲" in content
+    assert "| 歌名 | 歌手 |" in content  # 表格標頭
+    assert "| --- |" in content  # 分隔列
+    assert "Hello, Goodbye" in content
+    assert "The Beatles" in content
+
+
+def test_md_escapes_pipe_in_track_name(tmp_path):
+    path = tmp_path / "out.md"
+    writers.write_tracks([track(name="A | B")], path, fmt="md", header="x")
+    content = path.read_text(encoding="utf-8")
+    # 歌名中的 | 須跳脫,否則會破壞 Markdown 表格欄位
+    assert r"A \| B" in content
+
+
+def test_md_empty_list_still_writes_heading(tmp_path):
+    path = tmp_path / "out.md"
+    writers.write_tracks([], path, fmt="md", header="空清單")
+    content = path.read_text(encoding="utf-8")
+    assert "# 空清單" in content
+    assert "共 0 首歌曲" in content
+
+
 def test_json_round_trips(tmp_path):
     path = tmp_path / "out.json"
     writers.write_tracks([track(track_id="abc")], path, fmt="json")

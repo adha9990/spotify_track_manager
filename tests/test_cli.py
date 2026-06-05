@@ -45,9 +45,10 @@ def fake_client(monkeypatch):
 def test_scan_writes_report_files(fake_client, tmp_path):
     result = runner.invoke(cli.app, ["scan", "--output-dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "all_tracks.txt").exists()
-    assert (tmp_path / "duplicate_confident.txt").exists()
-    assert (tmp_path / "unplayable.txt").exists()
+    # 預設輸出為 Markdown
+    assert (tmp_path / "all_tracks.md").exists()
+    assert (tmp_path / "duplicate_confident.md").exists()
+    assert (tmp_path / "unplayable.md").exists()
 
 
 def test_scan_does_not_delete(fake_client, tmp_path):

@@ -14,7 +14,7 @@
   - 刪除前需**互動確認**(可用 `--yes` 略過)
   - 保留策略可選:`popularity`(預設,保留人氣最高)或 `oldest`(保留最早收藏)
 - **支援任意 playlist**:以 `--playlist <id>` 掃描指定歌單,預設為「我的最愛」
-- **多種輸出格式**:`txt`(預設)、`csv`、`json`
+- **多種輸出格式**:`md`(預設,Markdown 表格)、`txt`、`csv`、`json`
 
 ## 安裝
 
@@ -45,10 +45,10 @@ REDIRECT_URI=http://127.0.0.1:8888/callback
 ## 使用
 
 ```bash
-# 掃描「我的最愛」,輸出 txt 報表到 output/
+# 掃描「我的最愛」,輸出 Markdown 報表到 output/
 stm scan
 
-# 掃描指定 playlist,輸出 csv
+# 掃描指定 playlist,改輸出 csv
 stm scan --playlist 37i9dQZF1DXcBWIGoYBM5M --format csv
 
 # 預覽去重計畫(不刪除任何東西)
@@ -75,7 +75,7 @@ src/stm/
   fetch.py      抓取歌曲(分頁)
   detect.py     重複 / 失效偵測(純邏輯)
   dedupe.py     保留策略與刪除計畫
-  writers.py    txt / csv / json 報表輸出
+  writers.py    md / txt / csv / json 報表輸出
 tests/          pytest 測試
 ```
 
