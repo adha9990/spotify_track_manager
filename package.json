@@ -1,0 +1,33 @@
+{
+  "name": "spotify-track-manager",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "description": "Desktop app to scan, de-duplicate and clean up a Spotify library",
+  "scripts": {
+    "dev": "concurrently -k -n frontend,app -c green,magenta \"pnpm dev:frontend\" \"pnpm dev:desktop\"",
+    "dev:backend": "pnpm --filter @stm/backend dev",
+    "dev:frontend": "pnpm --filter @stm/frontend dev",
+    "dev:desktop": "pnpm --filter @stm/desktop dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint \"apps/backend/src/**/*.ts\" \"apps/frontend/src/**/*.{ts,tsx}\"",
+    "dist": "pnpm -r build && pnpm --filter @stm/desktop dist",
+    "dist:dir": "pnpm -r build && pnpm --filter @stm/desktop dist:dir"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "eslint": "^10.5.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.61.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "better-sqlite3"
+    ]
+  }
+}

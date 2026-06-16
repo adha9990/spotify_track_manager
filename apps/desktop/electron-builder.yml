@@ -1,0 +1,33 @@
+appId: com.bluestar.spotify-track-manager
+productName: Spotify Track Manager
+
+directories:
+  output: ../../release
+
+# Only the desktop main/preload bundles go inside the asar. The frontend build, the
+# self-contained backend bundle, and the native better-sqlite3 are assembled by
+# scripts/stage.mjs into ./build and shipped as plain files under resources/ — see
+# backend.ts / main.ts which resolve them via process.resourcesPath.
+files:
+  - dist/**/*
+extraResources:
+  - from: build
+    to: .
+
+asar: true
+
+win:
+  target: nsis
+  artifactName: ${productName}-${version}-setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+mac:
+  target: dmg
+  category: public.app-category.music
+
+linux:
+  target: AppImage
+  category: AudioVideo

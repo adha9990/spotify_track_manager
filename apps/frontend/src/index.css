@@ -1,0 +1,53 @@
+/* Fraunces gives the masthead its almanac character; Georgia is a graceful offline
+   fallback. Must precede the Tailwind import (all @import rules come first). */
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Fraunces", Georgia, "Times New Roman", ui-serif, serif;
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei",
+    "PingFang TC", "Noto Sans TC", sans-serif;
+
+  /* Warm "aged paper" surface + ink, with a single sharp accent. */
+  --color-paper: oklch(0.985 0.01 85);
+  --color-ink: oklch(0.22 0.02 60);
+  --color-accent: oklch(0.55 0.18 38); /* burnt orange */
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* faint warm grain so the surface reads as paper, not flat fill */
+  background-image: radial-gradient(oklch(0.5 0.03 60 / 0.04) 0.5px, transparent 0.5px);
+  background-size: 4px 4px;
+}
+
+/* Numbers (playcount, dates, durations) align in columns. */
+.nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Thin, even scrollbars that match the paper theme. */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: oklch(0.7 0.02 60 / 0.5);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.6 0.02 60 / 0.7);
+  background-clip: content-box;
+}
