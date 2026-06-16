@@ -18,6 +18,7 @@ pnpm dev                           # frontend (vite :5173) + electron shell, con
 pnpm --filter @stm/backend test
 pnpm --filter @stm/backend test -- src/domain/detect.test.ts
 pnpm --filter @stm/backend bundle  # esbuild → apps/backend/dist/server.cjs
+PORT=8799 STM_DB_PATH=/tmp/x.db node apps/backend/dist/server.cjs  # boot the bundle standalone → curl /health to smoke-test wiring without the GUI/login
 ```
 
 `packageManager` is pinned to pnpm; Node ≥ 22 (uses `process.loadEnvFile`). Root `package.json` lists `electron` and `esbuild` under `pnpm.onlyBuiltDependencies` — pnpm 10 ignores build scripts otherwise, and the electron binary never downloads.
@@ -28,11 +29,15 @@ Electron lets us open a real Spotify consent page and catch the OAuth redirect o
 
 1. `apps/desktop/src/auth.ts` — opens a `BrowserWindow` with Spotify's OAuth authorize URL (PKCE, `S256`), spins up an `http.createServer` on `127.0.0.1:8888`, catches `/callback?code=…`, exchanges the code for tokens, and stores the **refresh token encrypted** via `safeStorage` at `userData/spotify_refresh.bin`. Never written in plaintext.
 2. `apps/desktop/src/backend.ts` — forks `apps/backend/dist/server.cjs`, passing `SPOTIFY_CLIENT_ID` and `SPOTIFY_REFRESH_TOKEN` through the **process env**, not a file or CLI arg. Listens for `{ type: "refresh_token" }` IPC messages and re-persists any rotated token.
-3. `apps/backend/src/spotify/oauth.ts` — `refreshAccessToken(clientId, refreshToken)`: POSTs `grant_type=refresh_token` to `accounts.spotify.com/api/token` (public client — no secret). `auth.ts` caches the access token (~50 min) and, if Spotify rotates the refresh token, sends the new value back via `process.send` IPC.
+3. `apps/backend/src/adapters/spotify/oauth.ts` — `refreshAccessToken(clientId, refreshToken)`: POSTs `grant_type=refresh_token` to `accounts.spotify.com/api/token` (public client — no secret). `auth.ts` caches the access token (~50 min) and, if Spotify rotates the refresh token, sends the new value back via `process.send` IPC.
 
 **Developers** must register a Spotify app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard): APIs → Web API; Redirect URI → `http://127.0.0.1:8888/callback`; required scopes: `user-library-read`, `user-library-modify`, `user-read-private`, `user-modify-playback-state`, `user-read-playback-state`. Put the `client_id` in `apps/backend/.env` as `SPOTIFY_CLIENT_ID` (standalone dev) — Electron dev supplies it automatically at launch.
 
 **Hard security rules:** never put refresh tokens or access tokens on a command line, in a tool-written file, or anywhere in the transcript/logs. Never ask for or handle the user's Spotify password — only they can complete the interactive OAuth login.
+
+**Never go back** to the `sp_dc` cookie + reverse-engineered TOTP web-player token + Pathfinder GraphQL path — it triggers Spotify's anti-abuse ban (persistent `429`, `retry-after: 86400`). That's why auth is OAuth PKCE and play counts / localized (Chinese) names were dropped (the official API has `popularity`, not play counts).
+
+Debugging stored creds: the encrypted `spotify_refresh.bin` + `stm_history.db` live in `userData` = `%APPDATA%\@stm\desktop` (Windows). To decrypt from a standalone Electron script, call `app.setPath("userData", …/@stm/desktop)` **before** `whenReady` — safeStorage's key sits in that dir's `Local State`, so any other userData path decrypts with the wrong key.
 
 ## Architecture
 
