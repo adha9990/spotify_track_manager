@@ -40,6 +40,7 @@ export const SearchResultSchema = z.object({
   name: z.string(),
   artist: z.string(),
   album: z.string(),
+  durationMs: z.number().int(),
 });
 export type SearchResult = z.infer<typeof SearchResultSchema>;
 

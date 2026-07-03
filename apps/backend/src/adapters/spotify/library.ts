@@ -70,23 +70,40 @@ interface RawSearchTrack {
   name: string;
   artists?: { name?: string }[];
   album?: { name?: string };
+  duration_ms?: number;
+  is_playable?: boolean;
 }
 
-/** Search the catalog for replacement candidates for a dead track. */
-export async function searchTracks(query: string, limit = 10): Promise<SearchResult[]> {
+const SEARCH_LIMIT = 10;
+// Over-fetch so dropping unplayable results doesn't starve the list.
+const SEARCH_OVERFETCH = 20;
+
+/**
+ * Search the catalog for replacement candidates for a dead track. Only playable
+ * results survive (a replacement that is itself dead is useless); `fetcher` is
+ * injectable so tests stay offline, mirroring `collect`'s pager seam.
+ */
+export async function searchTracks(
+  query: string,
+  fetcher: typeof apiJson = apiJson,
+): Promise<SearchResult[]> {
   const params = new URLSearchParams({
     q: query,
     type: "track",
     market: MARKET,
-    limit: String(limit),
+    limit: String(SEARCH_OVERFETCH),
   });
-  const data = await apiJson<{ tracks?: { items?: RawSearchTrack[] } }>(`/search?${params}`);
-  return (data.tracks?.items ?? []).map((t) => ({
-    id: t.id,
-    name: t.name,
-    artist: (t.artists ?? []).map((a) => a.name ?? "").join(", "),
-    album: t.album?.name ?? "",
-  }));
+  const data = await fetcher<{ tracks?: { items?: RawSearchTrack[] } }>(`/search?${params}`);
+  return (data.tracks?.items ?? [])
+    .filter((t) => t.is_playable !== false)
+    .slice(0, SEARCH_LIMIT)
+    .map((t) => ({
+      id: t.id,
+      name: t.name,
+      artist: (t.artists ?? []).map((a) => a.name ?? "").join(", "),
+      album: t.album?.name ?? "",
+      durationMs: t.duration_ms ?? 0,
+    }));
 }
 
 /** Start playback of a track on the user's active device (requires Premium + an open client). */
