@@ -30,20 +30,38 @@ describe("createLabseGateway", () => {
     expect(loadExtractor).not.toHaveBeenCalled();
   });
 
-  it("embed loads the extractor once and reuses it", async () => {
-    // Requirement: the extractor is loaded lazily on first embed() and reused thereafter.
-    const extractor = fakeExtractorReturning([[0, 1]]);
-    const loadExtractor = vi.fn(async () => extractor);
+  it("embed loads the extractor once and reuses it, passing each batch's exact texts", async () => {
+    // Requirement: the extractor is loaded lazily on first embed() and reused thereafter,
+    // and each call forwards that call's own texts + the mean/normalize opts (a batching
+    // regression that dropped/duplicated texts must not slip past a loose matcher).
+    const extractor = vi.fn(async (_texts: string[], _opts: { pooling: "mean"; normalize: true }) => ({
+      tolist: () => [[0, 1]],
+    }));
+    const loadExtractor = vi.fn(async () => extractor as unknown as Extractor);
     const gateway = createLabseGateway({ modelPath: "/x", loadExtractor });
 
     await gateway.embed(["a"]);
     await gateway.embed(["b", "c"]);
 
     expect(loadExtractor).toHaveBeenCalledTimes(1);
-    expect(extractor).toHaveBeenCalledWith(
-      expect.anything(),
-      { pooling: "mean", normalize: true },
-    );
+    expect(extractor.mock.calls[0]).toEqual([["a"], { pooling: "mean", normalize: true }]);
+    expect(extractor.mock.calls[1]).toEqual([["b", "c"], { pooling: "mean", normalize: true }]);
+  });
+
+  it("retries loading after a failed load instead of poisoning the gateway for the process (F5)", async () => {
+    // Requirement: a rejected model load must not be memoized forever — a transient
+    // failure (AV lock, a race with model staging) would otherwise disable cross-language
+    // for the whole process. The next embed() must attempt the load again.
+    const extractor = fakeExtractorReturning([[1, 0]]);
+    const loadExtractor = vi
+      .fn<(path: string) => Promise<Extractor>>()
+      .mockRejectedValueOnce(new Error("transient load failure"))
+      .mockResolvedValueOnce(extractor);
+    const gateway = createLabseGateway({ modelPath: "/x", loadExtractor });
+
+    await expect(gateway.embed(["a"])).rejects.toThrow("transient load failure");
+    await expect(gateway.embed(["a"])).resolves.toEqual([[1, 0]]);
+    expect(loadExtractor).toHaveBeenCalledTimes(2);
   });
 
   it("embed returns the extractor's tolist() rows", async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { findConfidentDuplicates } from "./detect";
 import { makeTrack } from "./fixtures";
-import { findCrossLanguagePairs } from "./crosslang";
+import { CROSSLANG_MAX_TRACKS, findCrossLanguagePairs } from "./crosslang";
 
 // findCrossLanguagePairs surfaces suspected duplicates whose titles are semantically
 // the same across languages (e.g. a Chinese title and its English title) where no
@@ -208,5 +208,132 @@ describe("findCrossLanguagePairs — dead-copy hint reused from suspects.ts buil
     expect(pairs[0]!.keep.id).toBe("1");
     expect(pairs[0]!.remove.id).toBe("2");
     expect(pairs[0]!.hints).toContain("庫中已有相似曲");
+  });
+});
+
+// --- Hardening guards below: pin new behaviors not yet implemented (F1, F3, F8, perf-cap). ---
+
+describe("findCrossLanguagePairs — a NaN-producing vector is never admitted (F1)", () => {
+  it("does not pair (and never emits a NaN score) when one vector contains NaN even though the naive comparison NaN<threshold is false", () => {
+    const tracks = [
+      makeTrack({ id: "1", name: "告白氣球", artists: ["周杰倫"], durationMs: 200_000 }),
+      makeTrack({ id: "2", name: "Bubble", artists: ["Jay Chou"], durationMs: 200_500 }),
+    ];
+    const vectors = new Map<string, number[]>([
+      ["1", [NaN, 0]],
+      ["2", [1, 0]],
+    ]);
+
+    const pairs = findCrossLanguagePairs(tracks, {
+      ...baseOpts(),
+      vectors,
+      threshold: 0.82,
+    });
+
+    expect(pairs).toEqual([]);
+    expect(pairs.some((p) => Number.isNaN(p.score))).toBe(false);
+  });
+
+  it("does not pair (and never emits a NaN score) when both vectors are the zero vector", () => {
+    const tracks = [
+      makeTrack({ id: "1", name: "告白氣球", artists: ["周杰倫"], durationMs: 200_000 }),
+      makeTrack({ id: "2", name: "Bubble", artists: ["Jay Chou"], durationMs: 200_500 }),
+    ];
+    const vectors = new Map<string, number[]>([
+      ["1", [0, 0]],
+      ["2", [0, 0]],
+    ]);
+
+    const pairs = findCrossLanguagePairs(tracks, {
+      ...baseOpts(),
+      vectors,
+      threshold: 0.82,
+    });
+
+    expect(pairs).toEqual([]);
+    expect(pairs.some((p) => Number.isNaN(p.score))).toBe(false);
+  });
+});
+
+describe("findCrossLanguagePairs — mismatched vector dimensions are never admitted (F3)", () => {
+  it("skips a pair whose vectors have different lengths instead of computing a truncated (meaningless) dot product", () => {
+    const tracks = [
+      makeTrack({ id: "1", name: "告白氣球", artists: ["周杰倫"], durationMs: 200_000 }),
+      makeTrack({ id: "2", name: "Bubble", artists: ["Jay Chou"], durationMs: 200_500 }),
+    ];
+    // Truncated dot (Math.min length=2) would compute 1*1 + 0*0 = 1 >= threshold and wrongly admit.
+    const vectors = new Map<string, number[]>([
+      ["1", [1, 0, 0]],
+      ["2", [1, 0]],
+    ]);
+
+    const pairs = findCrossLanguagePairs(tracks, {
+      ...baseOpts(),
+      vectors,
+      threshold: 0.82,
+    });
+
+    expect(pairs).toEqual([]);
+  });
+});
+
+describe("findCrossLanguagePairs — boundary values are inclusive (F8)", () => {
+  it("admits a pair whose cosine is exactly equal to the threshold", () => {
+    const tracks = [
+      makeTrack({ id: "1", name: "告白氣球", artists: ["周杰倫"], durationMs: 200_000 }),
+      makeTrack({ id: "2", name: "Bubble", artists: ["Jay Chou"], durationMs: 200_500 }),
+    ];
+    // a=[1,0], b=[0.5, sqrt(0.75)] are both unit vectors and a·b = 0.5 exactly.
+    const vectors = new Map<string, number[]>([
+      ["1", [1, 0]],
+      ["2", [0.5, Math.sqrt(0.75)]],
+    ]);
+
+    const pairs = findCrossLanguagePairs(tracks, {
+      ...baseOpts(),
+      vectors,
+      threshold: 0.5,
+    });
+
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]!.score).toBeCloseTo(0.5, 5);
+  });
+
+  it("admits a pair whose |durationMs diff| is exactly equal to durationHintMs", () => {
+    const tracks = [
+      makeTrack({ id: "1", name: "告白氣球", artists: ["周杰倫"], durationMs: 200_000 }),
+      makeTrack({ id: "2", name: "Bubble", artists: ["Jay Chou"], durationMs: 205_000 }),
+    ];
+    const vectors = new Map<string, number[]>([
+      ["1", [1, 0]],
+      ["2", [1, 0]],
+    ]);
+
+    const pairs = findCrossLanguagePairs(tracks, {
+      ...baseOpts(),
+      vectors,
+      threshold: 0.82,
+      durationHintMs: 5000,
+    });
+
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]!.pairKey).toBe(keyOf("1", "2"));
+  });
+});
+
+describe("findCrossLanguagePairs — a large library skips the O(n^2) pass entirely (perf cap)", () => {
+  it("returns [] when tracks.length exceeds CROSSLANG_MAX_TRACKS, even though every pair would otherwise qualify", () => {
+    const tracks = Array.from({ length: CROSSLANG_MAX_TRACKS + 1 }, (_, i) =>
+      makeTrack({ id: `t${i}`, name: "告白氣球", artists: ["周杰倫"], durationMs: 200_000 }),
+    );
+    const vectors = new Map<string, number[]>(tracks.map((t) => [t.id, [1, 0]]));
+
+    const pairs = findCrossLanguagePairs(tracks, {
+      ...baseOpts(),
+      vectors,
+      threshold: 0.82,
+    });
+
+    expect(pairs).toEqual([]);
   });
 });

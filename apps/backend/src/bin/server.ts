@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { Dismissals } from "../adapters/db/dismissals";
@@ -34,10 +35,15 @@ async function main(): Promise<void> {
   // Absent → no embedding capability injected → cross-language detection is simply
   // off (lexical + confident detection unaffected). The gateway itself loads lazily,
   // so even a set-but-missing model can't crash boot — the service degrades on embed.
+  // Only wire cross-language when the model actually exists on disk. STM_MODEL_PATH is
+  // always set by the desktop shell, so a truthiness check alone would make every user
+  // who never fetched the model attempt (and fail) to load it on each first library
+  // fetch. existsSync makes the capability genuinely opt-in: absent model → cleanly off.
   const modelPath = process.env.STM_MODEL_PATH;
-  const embed: CrossLanguageEmbedding | undefined = modelPath
-    ? { cache: new Embeddings(dbPath), gateway: createLabseGateway({ modelPath }) }
-    : undefined;
+  const embed: CrossLanguageEmbedding | undefined =
+    modelPath && existsSync(modelPath)
+      ? { cache: new Embeddings(dbPath), gateway: createLabseGateway({ modelPath }) }
+      : undefined;
 
   const library = createLibraryService(gateway, dismissals, embed);
   await registerRoutes(app, { library, history, gateway });

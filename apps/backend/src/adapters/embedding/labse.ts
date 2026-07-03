@@ -49,7 +49,15 @@ export function createLabseGateway(options: LabseOptions): EmbeddingGateway {
   let extractorPromise: Promise<Extractor> | null = null;
 
   const getExtractor = (): Promise<Extractor> => {
-    if (!extractorPromise) extractorPromise = loadExtractor(options.modelPath);
+    // Memoize the successful load, but on a REJECTED load reset the cache so a later
+    // embed() retries — otherwise a single transient failure (AV file lock, a race
+    // with model staging) would permanently disable cross-language for the process.
+    if (!extractorPromise) {
+      extractorPromise = loadExtractor(options.modelPath).catch((err) => {
+        extractorPromise = null;
+        throw err;
+      });
+    }
     return extractorPromise;
   };
 

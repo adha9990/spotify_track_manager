@@ -7,7 +7,12 @@
 export interface CachedEmbedding {
   /** The L2-normalized sentence vector. */
   vec: number[];
-  /** Hash of the canonicalized title the vector was computed from — a mismatch means the track was renamed. */
+  /**
+   * The canonicalized title the vector was computed from (canonical(track.name)) — a
+   * mismatch means the track was renamed and the vector is stale. Despite the "hash"
+   * name it is normalized *plaintext*, not a cryptographic digest: it is only a
+   * change-detection key, never a privacy measure (the cache DB is local userData).
+   */
   nameHash: string;
   /** Identifier of the model that produced the vector — a mismatch means the model changed. */
   model: string;

@@ -14,6 +14,15 @@ import { type Admission, pairKeyOf, toPair } from "./suspects";
 /** Cosine-similarity floor for admitting a cross-language pair. */
 export const CROSSLANG_THRESHOLD = 0.82;
 
+/**
+ * Safety ceiling on the O(n²) pass below: at 6000 tracks that's ~18M pair
+ * checks — comfortably above a typical library (~1700 tracks) and Spotify's
+ * ~10k-liked-tracks ceiling is where the full 50M-pair pass would stall the
+ * event loop for multiple seconds. Past this size cross-language detection
+ * just stays off (degrades like ADR-5) rather than blocking the request.
+ */
+export const CROSSLANG_MAX_TRACKS = 6000;
+
 /** Cheap pre-filter: skip the cosine computation for pairs whose durations differ too much. */
 const DEFAULT_DURATION_HINT_MS = 5000;
 
@@ -58,6 +67,13 @@ export function findCrossLanguagePairs(
   tracks: Track[],
   opts: FindCrossLanguagePairsOptions,
 ): SuspectPair[] {
+  if (tracks.length > CROSSLANG_MAX_TRACKS) {
+    console.warn(
+      `findCrossLanguagePairs: skipping — ${tracks.length} tracks exceeds CROSSLANG_MAX_TRACKS (${CROSSLANG_MAX_TRACKS})`,
+    );
+    return [];
+  }
+
   const threshold = opts.threshold ?? CROSSLANG_THRESHOLD;
   const durationHintMs = opts.durationHintMs ?? DEFAULT_DURATION_HINT_MS;
   const confidentGroup = groupIndexOf(opts.confidentGroups);
@@ -75,11 +91,12 @@ export function findCrossLanguagePairs(
       const vectorA = opts.vectors.get(a.id);
       const vectorB = opts.vectors.get(b.id);
       if (!vectorA || !vectorB) continue;
+      if (vectorA.length !== vectorB.length) continue; // a truncated dot product would be meaningless
 
       if (Math.abs(a.durationMs - b.durationMs) > durationHintMs) continue;
 
       const cosine = dotProduct(vectorA, vectorB);
-      if (cosine < threshold) continue;
+      if (!(cosine >= threshold)) continue; // rejects NaN too (NaN >= x is always false)
 
       const pairKey = pairKeyOf(a, b);
       if (opts.dismissed.has(pairKey)) continue;
