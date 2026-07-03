@@ -12,6 +12,9 @@ build/
 release/
 apps/desktop/build/
 
+# Offline embedding model (large, fetched at build time — see apps/backend/scripts/fetch-model.mjs)
+apps/backend/models/
+
 # App data / secrets (never commit)
 .env
 .env.local
