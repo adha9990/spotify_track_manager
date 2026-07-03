@@ -1,10 +1,14 @@
 import type { Library, Track } from "@stm/shared";
 import { buildCleanup } from "../domain/cleanup";
+import { findConfidentDuplicates } from "../domain/detect";
+import { findSuspectPairs } from "../domain/suspects";
+import type { DismissalStore } from "../ports/dismissal-store";
 import type { SpotifyGateway } from "../ports/spotify-gateway";
 
-// Orchestrates the Spotify gateway + the pure cleanup planner, caching the fetched
-// snapshot in memory. Built once at the composition root with a concrete gateway, so
-// it depends only on the SpotifyGateway port — never on a Spotify adapter directly.
+// Orchestrates the Spotify gateway + the pure cleanup/suspects planners, caching the
+// fetched snapshot in memory. Built once at the composition root with concrete
+// adapters, so it depends only on the SpotifyGateway and DismissalStore ports —
+// never on a concrete adapter directly.
 
 export interface LibrarySnapshot extends Library {
   fetchedAt: string;
@@ -15,16 +19,27 @@ export interface LibraryService {
   getLibrary(now: string, force?: boolean): Promise<LibrarySnapshot>;
   /** Drop tracks from the cached snapshot after a successful delete, without a refetch. */
   applyLocalDelete(ids: string[]): void;
+  /** Record a suspect pair as dismissed and recompute the cached snapshot's suspects, if any. */
+  dismiss(pairKey: string, ts: string): void;
   invalidateLibrary(): void;
 }
 
-export function createLibraryService(gateway: SpotifyGateway): LibraryService {
+export function createLibraryService(gateway: SpotifyGateway, dismissals: DismissalStore): LibraryService {
   let cache: LibrarySnapshot | null = null;
   let inFlight: Promise<LibrarySnapshot> | null = null;
 
+  const suspectsFor = (tracks: Track[], confidentGroups: Track[][]) =>
+    findSuspectPairs(tracks, { dismissed: new Set(dismissals.list()), confidentGroups });
+
   async function build(now: string): Promise<LibrarySnapshot> {
     const tracks = await gateway.fetchSavedTracks();
-    const snapshot: LibrarySnapshot = { tracks, cleanup: buildCleanup(tracks), fetchedAt: now };
+    const confidentGroups = findConfidentDuplicates(tracks);
+    const snapshot: LibrarySnapshot = {
+      tracks,
+      cleanup: buildCleanup(tracks, confidentGroups),
+      suspects: suspectsFor(tracks, confidentGroups),
+      fetchedAt: now,
+    };
     cache = snapshot;
     return snapshot;
   }
@@ -45,7 +60,22 @@ export function createLibraryService(gateway: SpotifyGateway): LibraryService {
       if (!cache) return;
       const removed = new Set(ids);
       const tracks = cache.tracks.filter((t: Track) => !removed.has(t.id));
-      cache = { ...cache, tracks, cleanup: buildCleanup(tracks) };
+      const confidentGroups = findConfidentDuplicates(tracks);
+      cache = {
+        ...cache,
+        tracks,
+        cleanup: buildCleanup(tracks, confidentGroups),
+        suspects: suspectsFor(tracks, confidentGroups),
+      };
+    },
+
+    dismiss(pairKey, ts) {
+      dismissals.add(pairKey, ts);
+      if (!cache) return;
+      // Filter the cached suspects in place rather than recomputing the whole
+      // library: dismissing one pair can only ever remove that pair, so a
+      // filter is equivalent to a recompute here without the O(n) redo.
+      cache = { ...cache, suspects: cache.suspects.filter((p) => p.pairKey !== pairKey) };
     },
 
     invalidateLibrary() {

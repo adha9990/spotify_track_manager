@@ -19,6 +19,7 @@ export interface RouteDeps {
 const IdsBody = z.object({ ids: z.array(z.string()).min(1) });
 const PlayBody = z.object({ id: z.string() });
 const UndoBody = z.object({ batchId: z.string() });
+const DismissBody = z.object({ pairKey: z.string().min(1).max(200) });
 
 const now = () => new Date().toISOString();
 
@@ -90,5 +91,12 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
     await gateway.playTrack(parsed.data.id);
     return { ok: true };
+  });
+
+  app.post("/api/suspects/dismiss", async (req, reply) => {
+    const parsed = DismissBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
+    library.dismiss(parsed.data.pairKey, now());
+    return { dismissed: true };
   });
 }

@@ -11,6 +11,7 @@ export function Dialog({
   description,
   children,
   width = "max-w-md",
+  onCloseAutoFocus,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -18,12 +19,16 @@ export function Dialog({
   description?: ReactNode;
   children?: ReactNode;
   width?: string;
+  /** Overrides Radix's default of returning focus to the trigger on close — pass when the
+   * trigger may no longer be in the DOM (e.g. the card that opened it just unmounted). */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="fixed inset-0 z-40 bg-stone-900/30 backdrop-blur-[2px] data-[state=open]:animate-[fadeIn_120ms_ease]" />
         <RadixDialog.Content
+          onCloseAutoFocus={onCloseAutoFocus}
           className={`fixed left-1/2 top-1/2 z-50 w-[92vw] ${width} -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200 bg-paper p-6 shadow-2xl focus:outline-none`}
         >
           <div className="flex items-start justify-between gap-4">

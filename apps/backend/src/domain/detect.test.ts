@@ -95,6 +95,26 @@ describe("findConfidentDuplicates", () => {
   });
 });
 
+describe("findConfidentDuplicates canonicalization (S1)", () => {
+  it("groups a Traditional-Chinese title/artist with its Simplified-Chinese counterpart", () => {
+    const groups = findConfidentDuplicates([
+      makeTrack({ id: "1", name: "演員", artists: ["薛之謙"], isPlayable: true, popularity: 72 }),
+      makeTrack({ id: "2", name: "演员", artists: ["薛之谦"], isPlayable: true, popularity: 55 }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(ids(groups[0]!)).toEqual(new Set(["1", "2"]));
+  });
+
+  it("does not group different songs by the same artist (no over-merge regression)", () => {
+    expect(
+      findConfidentDuplicates([
+        makeTrack({ id: "1", name: "晴天", artists: ["周杰倫"] }),
+        makeTrack({ id: "2", name: "稻香", artists: ["周杰倫"] }),
+      ]),
+    ).toEqual([]);
+  });
+});
+
 describe("findNameOnlyDuplicates", () => {
   it("returns one representative per distinct artist for coincidental same names", () => {
     const groups = findNameOnlyDuplicates([

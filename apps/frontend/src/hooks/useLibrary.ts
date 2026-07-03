@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addTracks,
   deleteTracks,
+  dismissSuspect,
   getHistory,
   getLibrary,
   getStatus,
@@ -65,6 +66,17 @@ function useLibraryMutation<TArgs>(fn: (args: TArgs) => Promise<unknown>) {
 
 export const useDeleteTracks = () => useLibraryMutation((ids: string[]) => deleteTracks(ids));
 export const useAddTracks = () => useLibraryMutation((ids: string[]) => addTracks(ids));
+
+/** Dismiss a suspected-duplicate pair. Not a history op, so it doesn't touch the op-log or selection. */
+export function useDismissSuspect() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pairKey: string) => dismissSuspect(pairKey),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: LIBRARY_KEY });
+    },
+  });
+}
 
 /** The undo op-log, newest first. */
 export function useHistory(enabled: boolean) {

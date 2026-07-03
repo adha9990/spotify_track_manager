@@ -17,6 +17,7 @@
     "@stm/shared": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "fastify": "^5.2.1",
+    "opencc-js": "^1.4.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
