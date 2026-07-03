@@ -18,13 +18,14 @@ export default function App() {
 
   const tracks = useMemo(() => library.data?.tracks ?? [], [library.data]);
   const cleanup = library.data?.cleanup ?? [];
+  const suspects = library.data?.suspects ?? [];
   const prepared = useMemo(() => prepareTracks(tracks), [tracks]);
   const unplayable = useMemo(() => tracks.filter((t) => !t.isPlayable), [tracks]);
   const visible = useVisibleTracks(prepared); // hook — must run every render
 
   const counts = {
     all: tracks.length,
-    cleanup: cleanup.reduce((n, g) => n + g.removals.length, 0),
+    cleanup: cleanup.reduce((n, g) => n + g.removals.length, 0) + suspects.length,
     unplayable: unplayable.length,
   };
   const snap = library.data;
@@ -79,7 +80,7 @@ export default function App() {
             )}
             {tab === "cleanup" && (
               <div className="flex min-h-0 flex-1 flex-col pt-4">
-                <CleanupView groups={cleanup} />
+                <CleanupView groups={cleanup} suspects={suspects} />
               </div>
             )}
             {tab === "unplayable" && (

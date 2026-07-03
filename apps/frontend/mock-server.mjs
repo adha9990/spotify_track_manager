@@ -1,6 +1,8 @@
 // Mock backend for driving / screenshotting the frontend without a Spotify login.
 // Serves the same /api/* shape the real Fastify backend does, with sample data that
-// exercises every view (duplicates → cleanup, dead tracks → unplayable).
+// exercises every view (duplicates → cleanup, suspected duplicates → cleanup's second
+// section, dead tracks → unplayable). Stateful in-memory: deletes and dismissals
+// mutate the fixtures below so the UI reflects them on the next /api/library poll.
 // Run: `node mock-server.mjs [port]`  (default 8765).
 
 import { createServer } from "node:http";
@@ -46,44 +48,130 @@ const tracks = [
   track({ id: "t22", name: "夜に駆ける", artists: ["YOASOBI"], album: "THE BOOK", popularity: 85, addedAt: "2024-02-02T10:00:00Z" }),
   track({ id: "t23", name: "天后", artists: ["陳勢安"], album: "天后 (重製版)", popularity: 38, addedAt: "2021-04-04T10:00:00Z" }),
   track({ id: "t24", name: "成全", artists: ["劉若英"], album: "我等你", popularity: 57, addedAt: "2022-02-22T10:00:00Z" }),
+  // Extra fixtures for the 疑似重複(suspects) section below, plus a 繁/簡 confident group.
+  track({ id: "t25", name: "Lemon - Live", artists: ["米津玄師"], album: "Lemon (Live at Budokan)", popularity: 52, durationMs: 218000, addedAt: "2023-06-15T10:00:00Z" }),
+  track({ id: "t26", name: "晴天 (加長版)", artists: ["周杰倫"], album: "葉惠美 (紀念版)", popularity: 40, isPlayable: false, addedAt: "2021-05-05T10:00:00Z" }),
+  track({ id: "t27", name: "演員", artists: ["薛之謙"], album: "绅士", popularity: 65, addedAt: "2024-08-08T10:00:00Z" }),
+  track({ id: "t28", name: "演员", artists: ["薛之谦"], album: "演员", popularity: 45, addedAt: "2021-12-12T10:00:00Z" }),
 ];
 
 // Cleanup groups the 清理 tab renders side-by-side (keep + removals with reasons).
+// Confident duplicates: exact name+artist match, or the same song across traditional/
+// simplified Chinese script (演員/演员) — both collapse to one group automatically.
 const cleanup = [
   { keep: tracks[0], removals: [{ track: tracks[1], reason: "重複(已保留同組人氣最高者)" }] }, // 起風了
   { keep: tracks[2], removals: [{ track: tracks[3], reason: "重複(已保留同組人氣最高者)" }] }, // 我相信
   { keep: tracks[4], removals: [{ track: tracks[22], reason: "重複(已保留同組人氣最高者)" }] }, // 天后
+  { keep: tracks[26], removals: [{ track: tracks[27], reason: "重複(已保留同組人氣最高者)" }] }, // 演員/演员
 ];
+
+// Suspected duplicates: confidence too low to auto-collapse, so each pair is
+// confirmed individually in the cleanup tab's second section.
+const suspects = [
+  {
+    keep: tracks[19], // Lemon
+    remove: tracks[24], // Lemon - Live
+    pairKey: "t20:t25",
+    score: 0.82,
+    hints: ["版本差異", "時長相近"],
+  },
+  {
+    keep: tracks[14], // 晴天
+    remove: tracks[25], // 晴天 (加長版) — 已失效
+    pairKey: "t15:t26",
+    score: 0.58,
+    hints: ["名稱相近", "庫中已有相似曲"],
+  },
+];
+
+const historyBatches = [
+  { batchId: "h1", action: "delete", ts: "2026-06-06T09:31:00Z", count: 3, undone: false },
+  { batchId: "h2", action: "add", ts: "2026-06-05T20:15:00Z", count: 1, undone: false },
+  { batchId: "h3", action: "delete", ts: "2026-06-04T11:02:00Z", count: 12, undone: true },
+];
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    let data = "";
+    req.on("data", (chunk) => (data += chunk));
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(data || "{}"));
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
 
 const routes = {
   "GET /api/status": () => ({ connected: true, user: "示範使用者", product: "premium" }),
   "GET /api/library": () => ({
     tracks,
     cleanup,
+    suspects,
     fetchedAt: "2026-06-08T10:00:00Z",
   }),
   "GET /health": () => ({ ok: true }),
-  "GET /api/history": () => ({
-    batches: [
-      { batchId: "h1", action: "delete", ts: "2026-06-06T09:31:00Z", count: 3, undone: false },
-      { batchId: "h2", action: "add", ts: "2026-06-05T20:15:00Z", count: 1, undone: false },
-      { batchId: "h3", action: "delete", ts: "2026-06-04T11:02:00Z", count: 12, undone: true },
-    ],
-  }),
+  "GET /api/history": () => ({ batches: historyBatches }),
 };
 
-createServer((req, res) => {
+createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const key = `${req.method} ${url.pathname}`;
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Access-Control-Allow-Origin", "*");
 
   if (routes[key]) return res.end(JSON.stringify(routes[key]()));
+
   if (url.pathname === "/api/search")
     return res.end(JSON.stringify({ results: [
       { id: "r1", name: "她說 (2023 重新錄音)", artist: "林俊傑", album: "她說", durationMs: 254000 },
       { id: "r2", name: "她說 (Live)", artist: "林俊傑", album: "演唱會實況", durationMs: 271000 },
     ] }));
+
+  if (req.method === "POST" && url.pathname === "/api/tracks/delete") {
+    const body = await readBody(req);
+    const ids = new Set(Array.isArray(body.ids) ? body.ids : []);
+    const before = tracks.length;
+
+    for (let i = tracks.length - 1; i >= 0; i--) {
+      if (ids.has(tracks[i].id)) tracks.splice(i, 1);
+    }
+    for (let i = cleanup.length - 1; i >= 0; i--) {
+      const group = cleanup[i];
+      if (ids.has(group.keep.id)) {
+        cleanup.splice(i, 1);
+        continue;
+      }
+      group.removals = group.removals.filter((r) => !ids.has(r.track.id));
+      if (group.removals.length === 0) cleanup.splice(i, 1);
+    }
+    for (let i = suspects.length - 1; i >= 0; i--) {
+      const pair = suspects[i];
+      if (ids.has(pair.keep.id) || ids.has(pair.remove.id)) suspects.splice(i, 1);
+    }
+
+    const deleted = before - tracks.length;
+    if (deleted > 0) {
+      historyBatches.unshift({
+        batchId: `h${Date.now()}`,
+        action: "delete",
+        ts: new Date().toISOString(),
+        count: deleted,
+        undone: false,
+      });
+    }
+    return res.end(JSON.stringify({ deleted }));
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/suspects/dismiss") {
+    const body = await readBody(req);
+    const idx = suspects.findIndex((p) => p.pairKey === body.pairKey);
+    if (idx >= 0) suspects.splice(idx, 1);
+    return res.end(JSON.stringify({ dismissed: idx >= 0 }));
+  }
+
   if (req.method === "POST") return res.end(JSON.stringify({ ok: true, deleted: 0, added: 0 }));
   res.statusCode = 404;
   res.end(JSON.stringify({ error: "not found" }));
