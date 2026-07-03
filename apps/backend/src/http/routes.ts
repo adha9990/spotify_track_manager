@@ -19,7 +19,7 @@ export interface RouteDeps {
 const IdsBody = z.object({ ids: z.array(z.string()).min(1) });
 const PlayBody = z.object({ id: z.string() });
 const UndoBody = z.object({ batchId: z.string() });
-const DismissBody = z.object({ pairKey: z.string().min(1) });
+const DismissBody = z.object({ pairKey: z.string().min(1).max(200) });
 
 const now = () => new Date().toISOString();
 

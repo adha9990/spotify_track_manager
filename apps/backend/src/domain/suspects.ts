@@ -8,35 +8,48 @@ import { findConfidentDuplicates } from "./detect";
 // live/remaster/acoustic variant, or a title with a small spelling difference.
 // Pure logic, zero I/O. Never overlaps the confident-duplicate layer (see the
 // exclusion in findSuspectPairs) and always respects the caller's dismissals.
+//
+// Known limitation: the char-bigram Dice admission (below) has no structural
+// signal on very short titles — a 2-3 char title has only 1-2 bigrams, so a
+// single differing character can swing the score by 0.5+ and either miss a
+// real near-duplicate or (rarely) admit one that shouldn't match. Accepted as
+// a residual risk; the version-suffix path (score 1) is unaffected.
 
 export const DICE_THRESHOLD = 0.85;
 export const DURATION_HINT_MS = 5000;
 
-// Keywords that mark a bracketed/dashed title tail as a *version* marker rather
-// than a meaningful subtitle. Lowercase/simplified — stripVersionSuffix only ever
-// tests them against an already-canonicalized (lowercased, simplified) string.
-// Extend this list as new version markers turn up.
-const VERSION_KEYWORDS = [
+// Latin/ASCII version markers: matched as a whole word (\b...\b) so a short
+// keyword doesn't false-positive inside an unrelated word (e.g. "ver" inside
+// "foREVER" or "nEVER" — see the A1/A2 regression tests). Lowercase only —
+// stripVersionSuffix always tests against an already-canonicalized (lowercased)
+// string. "remaster" and "remastered" are both listed because a whole-word
+// match on "remaster" alone does not match "remastered" (no boundary between
+// "r" and "e"). Extend this list as new version markers turn up.
+const LATIN_VERSION_KEYWORDS = [
   "live",
   "remaster",
+  "remastered",
   "acoustic",
   "demo",
   "version",
-  "ver",
   "mix",
   "edit",
   "remix",
   "instrumental",
   "karaoke",
   "feat",
-  "现场",
-  "伴奏",
-  "纯音乐",
-  "版",
 ];
+const LATIN_VERSION_PATTERNS = LATIN_VERSION_KEYWORDS.map((kw) => new RegExp(`\\b${kw}\\b`));
+
+// Chinese version markers: matched as a plain substring. \b has no notion of a
+// CJK "word", so these stay substring tests (already-canonicalized text has
+// been folded to Simplified Chinese by `canonical`, so only the Simplified
+// spelling needs listing).
+const CJK_VERSION_KEYWORDS = ["现场", "伴奏", "纯音乐", "版"];
 
 const hasVersionKeyword = (suffix: string): boolean =>
-  VERSION_KEYWORDS.some((kw) => suffix.includes(kw));
+  CJK_VERSION_KEYWORDS.some((kw) => suffix.includes(kw)) ||
+  LATIN_VERSION_PATTERNS.some((re) => re.test(suffix));
 
 /**
  * Strip a trailing "(<suffix>)" or " - <suffix>" from a canonicalized title, but
@@ -83,6 +96,22 @@ export function diceBigram(a: string, b: string): number {
   return (2 * shared) / (bigramsA.length + bigramsB.length);
 }
 
+/**
+ * O(1) upper bound on diceBigram(a, b) from string lengths alone: the shared-bigram
+ * count can never exceed the smaller side's bigram count, so
+ * 2*min(|bigrams(a)|,|bigrams(b)|) / (|bigrams(a)|+|bigrams(b)|) bounds the real
+ * score from above. Lets the O(b²) pairing loop skip the actual bigram-set
+ * computation for pairs that can't possibly reach DICE_THRESHOLD. Returns null
+ * (no cheap bound available) when either string has fewer than 2 chars — that
+ * edge case is rare and diceBigram itself is O(1) for it anyway.
+ */
+function diceUpperBound(a: string, b: string): number | null {
+  const bigramsA = a.length - 1;
+  const bigramsB = b.length - 1;
+  if (bigramsA <= 0 || bigramsB <= 0) return null;
+  return (2 * Math.min(bigramsA, bigramsB)) / (bigramsA + bigramsB);
+}
+
 const primaryArtist = (t: Track): string => t.artists[0] ?? "";
 
 /** Bucket tracks by canonical primary artist; only buckets with >1 track can pair. */
@@ -101,10 +130,15 @@ function bucketByArtist(tracks: Track[]): Track[][] {
   return [...buckets.values()].filter((g) => g.length > 1);
 }
 
+/** The stable pairKey: the two ids sorted and joined with "|", independent of call order. */
+export function pairKeyOf(a: Track, b: Track): string {
+  return [a.id, b.id].sort().join("|");
+}
+
 /** trackId -> confident-duplicate group index, so pairing can skip same-group tracks. */
-function confidentGroupOf(tracks: Track[]): Map<string, number> {
+function groupIndexOf(groups: Track[][]): Map<string, number> {
   const map = new Map<string, number>();
-  findConfidentDuplicates(tracks).forEach((group, index) => {
+  groups.forEach((group, index) => {
     for (const t of group) map.set(t.id, index);
   });
   return map;
@@ -115,14 +149,28 @@ interface Admission {
   hint: string;
 }
 
+/** A bucket entry with its canonical/stripped name precomputed once, not per O(b²) pair. */
+interface PreparedTrack {
+  track: Track;
+  canonicalName: string;
+  strippedName: string;
+}
+
+function prepareBucket(bucket: Track[]): PreparedTrack[] {
+  return bucket.map((track) => {
+    const canonicalName = canonical(track.name);
+    return { track, canonicalName, strippedName: stripVersionSuffix(canonicalName) };
+  });
+}
+
 /** Version-suffix match (score 1) takes priority over a fuzzy Dice match. */
-function admit(a: Track, b: Track): Admission | null {
-  const nameA = canonical(a.name);
-  const nameB = canonical(b.name);
-  if (stripVersionSuffix(nameA) === stripVersionSuffix(nameB)) {
+function admit(a: PreparedTrack, b: PreparedTrack): Admission | null {
+  if (a.strippedName === b.strippedName) {
     return { score: 1, hint: "版本差異" };
   }
-  const dice = diceBigram(nameA, nameB);
+  const bound = diceUpperBound(a.canonicalName, b.canonicalName);
+  if (bound !== null && bound < DICE_THRESHOLD) return null;
+  const dice = diceBigram(a.canonicalName, b.canonicalName);
   if (dice >= DICE_THRESHOLD) {
     return { score: dice, hint: "名稱相似" };
   }
@@ -143,7 +191,7 @@ function toPair(a: Track, b: Track, admission: Admission): SuspectPair {
   return {
     keep,
     remove: removed,
-    pairKey: [a.id, b.id].sort().join("|"),
+    pairKey: pairKeyOf(a, b),
     score: admission.score,
     hints: buildHints(a, b, admission.hint, keep, removed),
   };
@@ -153,27 +201,34 @@ function toPair(a: Track, b: Track, admission: Admission): SuspectPair {
  * Find suspected-duplicate pairs: same canonical primary artist, a near-identical
  * title (version suffix or Dice >= DICE_THRESHOLD), not already a confident
  * duplicate, and not dismissed by the caller.
+ *
+ * `confidentGroups`, if passed, is used as-is instead of recomputing
+ * findConfidentDuplicates(tracks) — for a caller (the library service) that
+ * already computed it for buildCleanup, this halves a per-request O(n) pass.
  */
 export function findSuspectPairs(
   tracks: Track[],
-  opts: { dismissed: Set<string> },
+  opts: { dismissed: Set<string>; confidentGroups?: Track[][] },
 ): SuspectPair[] {
-  const confidentGroup = confidentGroupOf(tracks);
+  const confidentGroup = groupIndexOf(opts.confidentGroups ?? findConfidentDuplicates(tracks));
   const pairs: SuspectPair[] = [];
 
   for (const bucket of bucketByArtist(tracks)) {
-    for (let i = 0; i < bucket.length; i++) {
-      for (let j = i + 1; j < bucket.length; j++) {
-        const a = bucket[i]!;
-        const b = bucket[j]!;
+    const prepared = prepareBucket(bucket);
+    for (let i = 0; i < prepared.length; i++) {
+      for (let j = i + 1; j < prepared.length; j++) {
+        const pa = prepared[i]!;
+        const pb = prepared[j]!;
+        const a = pa.track;
+        const b = pb.track;
 
         const groupA = confidentGroup.get(a.id);
         if (groupA !== undefined && groupA === confidentGroup.get(b.id)) continue;
 
-        const admission = admit(a, b);
+        const admission = admit(pa, pb);
         if (!admission) continue;
 
-        const pairKey = [a.id, b.id].sort().join("|");
+        const pairKey = pairKeyOf(a, b);
         if (opts.dismissed.has(pairKey)) continue;
 
         pairs.push(toPair(a, b, admission));

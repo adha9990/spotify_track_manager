@@ -1,5 +1,6 @@
 import type { Library, Track } from "@stm/shared";
 import { buildCleanup } from "../domain/cleanup";
+import { findConfidentDuplicates } from "../domain/detect";
 import { findSuspectPairs } from "../domain/suspects";
 import type { DismissalStore } from "../ports/dismissal-store";
 import type { SpotifyGateway } from "../ports/spotify-gateway";
@@ -27,15 +28,16 @@ export function createLibraryService(gateway: SpotifyGateway, dismissals: Dismis
   let cache: LibrarySnapshot | null = null;
   let inFlight: Promise<LibrarySnapshot> | null = null;
 
-  const suspectsFor = (tracks: Track[]) =>
-    findSuspectPairs(tracks, { dismissed: new Set(dismissals.list()) });
+  const suspectsFor = (tracks: Track[], confidentGroups: Track[][]) =>
+    findSuspectPairs(tracks, { dismissed: new Set(dismissals.list()), confidentGroups });
 
   async function build(now: string): Promise<LibrarySnapshot> {
     const tracks = await gateway.fetchSavedTracks();
+    const confidentGroups = findConfidentDuplicates(tracks);
     const snapshot: LibrarySnapshot = {
       tracks,
-      cleanup: buildCleanup(tracks),
-      suspects: suspectsFor(tracks),
+      cleanup: buildCleanup(tracks, confidentGroups),
+      suspects: suspectsFor(tracks, confidentGroups),
       fetchedAt: now,
     };
     cache = snapshot;
@@ -58,13 +60,22 @@ export function createLibraryService(gateway: SpotifyGateway, dismissals: Dismis
       if (!cache) return;
       const removed = new Set(ids);
       const tracks = cache.tracks.filter((t: Track) => !removed.has(t.id));
-      cache = { ...cache, tracks, cleanup: buildCleanup(tracks), suspects: suspectsFor(tracks) };
+      const confidentGroups = findConfidentDuplicates(tracks);
+      cache = {
+        ...cache,
+        tracks,
+        cleanup: buildCleanup(tracks, confidentGroups),
+        suspects: suspectsFor(tracks, confidentGroups),
+      };
     },
 
     dismiss(pairKey, ts) {
       dismissals.add(pairKey, ts);
       if (!cache) return;
-      cache = { ...cache, suspects: suspectsFor(cache.tracks) };
+      // Filter the cached suspects in place rather than recomputing the whole
+      // library: dismissing one pair can only ever remove that pair, so a
+      // filter is equivalent to a recompute here without the O(n) redo.
+      cache = { ...cache, suspects: cache.suspects.filter((p) => p.pairKey !== pairKey) };
     },
 
     invalidateLibrary() {

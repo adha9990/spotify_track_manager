@@ -192,4 +192,39 @@ describe("createLibraryService — suspects wired to real computation (T5)", () 
     expect(() => svc.dismiss(suspectPairKey, "2026-01-01T00:00:00Z")).not.toThrow();
     expect(dismissals.list()).toEqual([suspectPairKey]);
   });
+
+  // D: dismiss() must filter the cached suspects in place, not recompute-and-drop
+  // everything — a snapshot with more than one suspect pair should lose only the
+  // dismissed pair, and dismiss must never trigger a Spotify refetch.
+  it("dismiss(pairKey, ts) on a multi-pair snapshot removes only the dismissed pair, leaves the rest, and never refetches (D1)", async () => {
+    let calls = 0;
+    const other1 = () =>
+      makeTrack({ id: "o1", name: "夜空中最亮的星 陪我長大", artists: ["逃跑計劃"], isPlayable: true, popularity: 70 });
+    const other2 = () =>
+      makeTrack({ id: "o2", name: "夜空中最亮的星 陪伴我長大", artists: ["逃跑計劃"], isPlayable: true, popularity: 40 });
+    const otherPairKey = [other1().id, other2().id].sort().join("|");
+
+    const dismissals = fakeDismissalStore();
+    const svc = createLibraryService(
+      fakeGateway({
+        fetchSavedTracks: async () => {
+          calls++;
+          return [lemon(), lemonLive(), other1(), other2()];
+        },
+      }),
+      dismissals,
+    );
+
+    const before = await svc.getLibrary("t");
+    expect(before.suspects.map((p) => p.pairKey).sort()).toEqual([otherPairKey, suspectPairKey].sort());
+    const untouchedPairBefore = before.suspects.find((p) => p.pairKey === otherPairKey);
+
+    svc.dismiss(suspectPairKey, "2026-01-01T00:00:00Z");
+    expect(calls).toBe(1); // dismiss itself must not refetch
+
+    const after = await svc.getLibrary("t");
+    expect(after.suspects.map((p) => p.pairKey)).toEqual([otherPairKey]);
+    expect(after.suspects[0]).toEqual(untouchedPairBefore); // the surviving pair is unchanged
+    expect(calls).toBe(1); // the follow-up getLibrary must still serve from cache
+  });
 });

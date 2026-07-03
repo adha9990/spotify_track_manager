@@ -2,10 +2,8 @@ import { LibrarySchema, SuspectPairSchema } from "@stm/shared";
 import { describe, expect, it } from "vitest";
 import { makeTrack } from "./fixtures";
 
-// Contract tests for the new "suspected duplicate pair" shape shared between backend
-// and frontend (packages/shared/src/index.ts). These test the Zod contract only —
-// no implementation exists yet, so every case here is expected to fail until
-// SuspectPairSchema is added and LibrarySchema grows a `suspects` field.
+// Contract tests for the "suspected duplicate pair" shape shared between backend
+// and frontend (packages/shared/src/index.ts). These test the Zod contract only.
 
 describe("SuspectPairSchema", () => {
   it("accepts a fully-populated suspect pair (keep/remove are full Track objects)", () => {

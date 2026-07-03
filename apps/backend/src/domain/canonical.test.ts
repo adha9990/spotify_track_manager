@@ -42,3 +42,22 @@ describe("canonical", () => {
     expect(canonical("晴天")).not.toBe(canonical("稻香"));
   });
 });
+
+// B: canonical() over non-Chinese CJK input (Japanese). Regression net — pins that the
+// OpenCC Traditional->Simplified fold does not collide distinct Japanese text. The known
+// 裏/里 collision (OpenCC folds a Japanese-specific kanji onto an unrelated Chinese
+// character) is a documented limitation, not asserted here.
+describe("canonical — non-Chinese CJK input (Japanese) (B)", () => {
+  it("does not conflate two different Japanese artist names", () => {
+    expect(canonical("米津玄師")).not.toBe(canonical("星野源"));
+  });
+
+  it("does not conflate two different Japanese song titles", () => {
+    expect(canonical("夜に駆ける")).not.toBe(canonical("夜明けと蛍"));
+  });
+
+  it("is idempotent for input containing Japanese kanji", () => {
+    const once = canonical("広島");
+    expect(canonical(once)).toBe(once);
+  });
+});

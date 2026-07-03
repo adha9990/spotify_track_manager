@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { findConfidentDuplicates } from "./detect";
 import { makeTrack } from "./fixtures";
 import { findSuspectPairs } from "./suspects";
 
@@ -306,5 +307,136 @@ describe("findSuspectPairs — multiple independent artist buckets", () => {
       noDismissals(),
     );
     expect(pairs.map((p) => p.pairKey).sort()).toEqual([keyOf("1", "2"), keyOf("3", "4")]);
+  });
+});
+
+// A: hasVersionKeyword does a bare substring test, so short keywords like "ver" false-
+// -positive-match inside unrelated words ("foREVER", "nEVER"), wrongly admitting two
+// distinct songs as a version-suffix pair. These two cases pin the fix: the version-
+// suffix strip must not fire on that false substring. Currently red — a fix that scopes
+// the keyword match to a whole word (or drops the "ver" alias) is expected to flip these
+// green without breaking the genuine keyword matches pinned in the A3 regression net.
+describe("findSuspectPairs — version-suffix keyword must not match as a bare substring inside an unrelated word (A1)", () => {
+  it("does not pair 'Song Title' with 'Song Title (Forever)' — 'Forever' contains 'ver' but is not a version marker", () => {
+    const pairs = findSuspectPairs(
+      [
+        makeTrack({ id: "1", name: "Song Title", artists: ["Artist"], isPlayable: true, durationMs: 200_000 }),
+        makeTrack({ id: "2", name: "Song Title (Forever)", artists: ["Artist"], isPlayable: true, durationMs: 260_000 }),
+      ],
+      noDismissals(),
+    );
+    expect(pairs).toEqual([]);
+  });
+});
+
+describe("findSuspectPairs — version-suffix keyword must not match as a bare substring inside an unrelated word (A2)", () => {
+  it("does not strip 'Never - Ever' down to 'Never' — 'Ever' contains 'ver' but is not a version marker", () => {
+    const pairs = findSuspectPairs(
+      [
+        makeTrack({ id: "1", name: "Never - Ever", artists: ["Artist"] }),
+        makeTrack({ id: "2", name: "Never", artists: ["Artist"] }),
+      ],
+      noDismissals(),
+    );
+    expect(pairs).toEqual([]);
+  });
+});
+
+// A3: regression net — the false-substring fix above must not disturb genuine version-
+// keyword suffixes (whole-word "remaster", a suffix merely containing 版/现场). These
+// pass under the current implementation already; they must keep passing after the fix.
+describe("findSuspectPairs — genuine version-suffix keywords still admit a pair (A3, regression net)", () => {
+  it("still pairs a title with its (Remastered) suffix", () => {
+    const pairs = findSuspectPairs(
+      [
+        makeTrack({ id: "1", name: "告白氣球", artists: ["周杰倫"], isPlayable: true }),
+        makeTrack({ id: "2", name: "告白氣球 (Remastered)", artists: ["周杰倫"], isPlayable: true }),
+      ],
+      noDismissals(),
+    );
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]!.score).toBe(1);
+  });
+
+  it("still pairs a title with its 加長版 (extended-edition) suffix", () => {
+    const pairs = findSuspectPairs(
+      [
+        makeTrack({ id: "1", name: "晴天", artists: ["周杰倫"], isPlayable: true }),
+        makeTrack({ id: "2", name: "晴天 (加長版)", artists: ["周杰倫"], isPlayable: true }),
+      ],
+      noDismissals(),
+    );
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]!.score).toBe(1);
+  });
+
+  it("still pairs a title with its (現場) live suffix", () => {
+    const pairs = findSuspectPairs(
+      [
+        makeTrack({ id: "1", name: "演唱會", artists: ["Artist"], isPlayable: true }),
+        makeTrack({ id: "2", name: "演唱會 (現場)", artists: ["Artist"], isPlayable: true }),
+      ],
+      noDismissals(),
+    );
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]!.score).toBe(1);
+  });
+});
+
+// C: findSuspectPairs grows an optional `confidentGroups` opt so a caller that already
+// computed findConfidentDuplicates(tracks) (e.g. the library service, which needs it for
+// buildCleanup too) can pass it in instead of suspects.ts recomputing it internally.
+describe("findSuspectPairs — accepts an externally precomputed confidentGroups, equivalent to internal computation (C1)", () => {
+  it("produces identical pairs whether confidentGroups is precomputed and passed in, or omitted", () => {
+    const tracks = [
+      makeTrack({ id: "1", name: "Lemon", artists: ["米津玄師"], isPlayable: true, popularity: 80 }),
+      makeTrack({ id: "2", name: "Lemon - Live", artists: ["米津玄師"], isPlayable: false, popularity: 60 }),
+      makeTrack({ id: "3", name: "演員", artists: ["薛之謙"], isPlayable: true, popularity: 72 }),
+      makeTrack({ id: "4", name: "演员", artists: ["薛之谦"], isPlayable: false, popularity: 40 }),
+    ];
+    const withoutOption = findSuspectPairs(tracks, { dismissed: new Set() });
+    const withOption = findSuspectPairs(tracks, {
+      dismissed: new Set(),
+      confidentGroups: findConfidentDuplicates(tracks),
+    });
+    expect(withOption).toEqual(withoutOption);
+  });
+});
+
+describe("findSuspectPairs — empty and singleton libraries yield no pairs (C2)", () => {
+  it("returns [] for an empty library", () => {
+    expect(findSuspectPairs([], { dismissed: new Set() })).toEqual([]);
+  });
+
+  it("returns [] for a library with a single track", () => {
+    expect(findSuspectPairs([makeTrack({ id: "1" })], { dismissed: new Set() })).toEqual([]);
+  });
+});
+
+describe("findSuspectPairs — pins the C(3,2)=3 pair-count semantics for a 3-way suspect cluster (C3, ADR-3)", () => {
+  it("produces 3 pairs for three mutually near-identical tracks by the same artist (original / Live / Remastered)", () => {
+    const pairs = findSuspectPairs(
+      [
+        makeTrack({ id: "1", name: "Track Title", artists: ["Artist"], isPlayable: true }),
+        makeTrack({ id: "2", name: "Track Title - Live", artists: ["Artist"], isPlayable: false }),
+        makeTrack({ id: "3", name: "Track Title (Remastered)", artists: ["Artist"], isPlayable: true }),
+      ],
+      noDismissals(),
+    );
+    expect(pairs).toHaveLength(3);
+    expect(pairs.map((p) => p.pairKey).sort()).toEqual([keyOf("1", "2"), keyOf("1", "3"), keyOf("2", "3")]);
+  });
+});
+
+describe("findSuspectPairs — dismissing one pair in a cluster only removes that pair (C4)", () => {
+  it("keeps the other 2 pairs of a 3-way cluster when 1 of the 3 pairKeys is dismissed", () => {
+    const tracks = [
+      makeTrack({ id: "1", name: "Track Title", artists: ["Artist"], isPlayable: true }),
+      makeTrack({ id: "2", name: "Track Title - Live", artists: ["Artist"], isPlayable: false }),
+      makeTrack({ id: "3", name: "Track Title (Remastered)", artists: ["Artist"], isPlayable: true }),
+    ];
+    const pairs = findSuspectPairs(tracks, { dismissed: new Set([keyOf("1", "2")]) });
+    expect(pairs).toHaveLength(2);
+    expect(pairs.map((p) => p.pairKey).sort()).toEqual([keyOf("1", "3"), keyOf("2", "3")]);
   });
 });
