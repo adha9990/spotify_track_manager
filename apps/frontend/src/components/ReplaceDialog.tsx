@@ -1,6 +1,7 @@
 import type { Track } from "@stm/shared";
 import { useState } from "react";
-import { useAddTracks, useDeleteTracks, useSearchTracks } from "../hooks/useLibrary";
+import { useAddTracks, useDeleteTracks, usePlayTrack, useSearchTracks } from "../hooks/useLibrary";
+import { formatDuration } from "../lib/format";
 import { Button, Icon } from "./primitives";
 import { Dialog } from "./Dialog";
 
@@ -20,6 +21,7 @@ export function ReplaceDialog({
   const [query, setQuery] = useState(seed);
   const add = useAddTracks();
   const del = useDeleteTracks();
+  const play = usePlayTrack();
 
   // Reset the query to the seed whenever a different dead track is opened.
   const [lastSeed, setLastSeed] = useState(seed);
@@ -60,16 +62,25 @@ export function ReplaceDialog({
 
       <div className="mt-3 max-h-72 overflow-auto rounded-md border border-stone-200">
         {results.isPending && query.trim() && <p className="p-4 text-sm text-stone-400">搜尋中…</p>}
-        {results.data?.length === 0 && <p className="p-4 text-sm text-stone-400">沒有結果</p>}
+        {results.data?.length === 0 && (
+          <p className="p-4 text-sm text-stone-400">沒有結果(已濾除不可播放的版本)</p>
+        )}
         {results.data?.map((r) => (
           <div
             key={r.id}
             className="flex items-center gap-3 border-b border-stone-100 px-3 py-2 last:border-0 hover:bg-stone-50"
           >
+            <button
+              onClick={() => play.mutate(r.id)}
+              title="試聽"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-stone-500 hover:bg-accent hover:text-white"
+            >
+              <Icon name="play" className="h-3.5 w-3.5" />
+            </button>
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{r.name}</div>
               <div className="truncate text-xs text-stone-500">
-                {r.artist} · {r.album}
+                {r.artist} · {r.album} · {formatDuration(r.durationMs)}
               </div>
             </div>
             <Button size="sm" variant="primary" disabled={busy} onClick={() => replace(r.id)}>
@@ -79,6 +90,10 @@ export function ReplaceDialog({
           </div>
         ))}
       </div>
+
+      {play.isError && (
+        <p className="mt-2 text-xs text-red-700">無法播放:請先開啟 Spotify 播放器(需 Premium)。</p>
+      )}
     </Dialog>
   );
 }
