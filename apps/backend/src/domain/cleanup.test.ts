@@ -12,38 +12,55 @@ describe("buildCleanup", () => {
     ).toEqual([]);
   });
 
-  it("lists every removable copy, keeping one per group", () => {
-    const items = buildCleanup([
+  it("returns one group per duplicate set, pairing keep with its removals", () => {
+    const groups = buildCleanup([
       song("keep", { popularity: 90 }),
       song("drop1", { popularity: 10 }),
       song("drop2", { popularity: 20 }),
     ]);
-    expect(items.map((i) => i.id).sort()).toEqual(["drop1", "drop2"]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.keep.id).toBe("keep");
+    expect(groups[0]!.removals.map((r) => r.track.id).sort()).toEqual(["drop1", "drop2"]);
+  });
+
+  it("carries the keep side's full track info (the UI renders both sides)", () => {
+    const groups = buildCleanup([
+      song("keep", { popularity: 90, album: "首版" }),
+      song("drop", { popularity: 10, album: "重發版" }),
+    ]);
+    expect(groups[0]!.keep.album).toBe("首版");
+    expect(groups[0]!.removals[0]!.track.album).toBe("重發版");
   });
 
   it("flags a dead copy that has a playable twin with the stale reason", () => {
-    const items = buildCleanup([
+    const groups = buildCleanup([
       song("alive", { isPlayable: true, popularity: 10 }),
       song("dead", { isPlayable: false, popularity: 99 }),
     ]);
-    expect(items).toHaveLength(1);
-    expect(items[0]!.id).toBe("dead");
-    expect(items[0]!.reason).toContain("已失效");
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.keep.id).toBe("alive");
+    expect(groups[0]!.removals[0]!.track.id).toBe("dead");
+    expect(groups[0]!.removals[0]!.reason).toContain("已失效");
   });
 
   it("uses the duplicate reason when both copies are playable", () => {
-    const items = buildCleanup([
+    const groups = buildCleanup([
       song("keep", { popularity: 90 }),
       song("drop", { popularity: 10 }),
     ]);
-    expect(items[0]!.reason).toContain("重複");
+    expect(groups[0]!.removals[0]!.reason).toContain("重複");
   });
 
-  it("joins multiple artists into the display string", () => {
-    const items = buildCleanup([
-      song("keep", { artists: ["A", "B"], popularity: 90 }),
-      song("drop", { artists: ["A", "B"], popularity: 10 }),
+  it("mixes reasons within one group (a dead copy and a low-popularity copy)", () => {
+    const groups = buildCleanup([
+      song("keep", { popularity: 90 }),
+      song("dead", { isPlayable: false, popularity: 99 }),
+      song("low", { popularity: 10 }),
     ]);
-    expect(items[0]!.artist).toBe("A, B");
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.keep.id).toBe("keep");
+    const byId = Object.fromEntries(groups[0]!.removals.map((r) => [r.track.id, r.reason]));
+    expect(byId["dead"]).toContain("已失效");
+    expect(byId["low"]).toContain("重複");
   });
 });

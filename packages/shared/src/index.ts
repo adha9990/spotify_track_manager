@@ -16,14 +16,23 @@ export const TrackSchema = z.object({
 });
 export type Track = z.infer<typeof TrackSchema>;
 
-/** One row of the one-click cleanup plan, with the reason it is being removed. */
-export const CleanupItemSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  artist: z.string(),
+/** One track slated for removal, with the reason it is safe to remove. */
+export const CleanupRemovalSchema = z.object({
+  track: TrackSchema,
   reason: z.string(),
 });
-export type CleanupItem = z.infer<typeof CleanupItemSchema>;
+export type CleanupRemoval = z.infer<typeof CleanupRemovalSchema>;
+
+/**
+ * One confident-duplicate group in the cleanup plan: the copy we keep, plus every
+ * copy to remove. Full Track info on both sides so the UI can lay them out
+ * side-by-side for human verification. `keep.id` doubles as the stable group key.
+ */
+export const CleanupGroupSchema = z.object({
+  keep: TrackSchema,
+  removals: z.array(CleanupRemovalSchema).min(1),
+});
+export type CleanupGroup = z.infer<typeof CleanupGroupSchema>;
 
 /** A simplified search result for finding a replacement track. */
 export const SearchResultSchema = z.object({
@@ -47,7 +56,7 @@ export type HistoryBatch = z.infer<typeof HistoryBatchSchema>;
 /** Library snapshot the backend returns to the frontend. */
 export const LibrarySchema = z.object({
   tracks: z.array(TrackSchema),
-  cleanup: z.array(CleanupItemSchema),
+  cleanup: z.array(CleanupGroupSchema),
 });
 export type Library = z.infer<typeof LibrarySchema>;
 
