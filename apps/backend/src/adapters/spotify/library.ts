@@ -37,9 +37,27 @@ export async function collect(firstPath: string, pager: Pager = apiJson): Promis
   return tracks;
 }
 
-/** Fetch the user's Liked Songs in full. */
+/**
+ * Drop repeated ids, keeping the first occurrence. Liked Songs are a set keyed by
+ * track id, and the whole detect/dedupe/suspects pipeline assumes ids are unique —
+ * but Spotify's paging can still hand the same id back twice. A leaked duplicate id
+ * collapses inside findConfidentDuplicates (mergeGroups' by-id map) and then crashes
+ * findSuspectPairs, so uniqueness is enforced here at the ingestion boundary.
+ */
+function dedupeById(tracks: Track[]): Track[] {
+  const seen = new Set<string>();
+  const out: Track[] = [];
+  for (const t of tracks) {
+    if (seen.has(t.id)) continue;
+    seen.add(t.id);
+    out.push(t);
+  }
+  return out;
+}
+
+/** Fetch the user's Liked Songs in full, with each track id guaranteed to appear once. */
 export const fetchSavedTracks = (pager?: Pager): Promise<Track[]> =>
-  collect(`/me/tracks?limit=${PAGE_SIZE}&market=${MARKET}`, pager);
+  collect(`/me/tracks?limit=${PAGE_SIZE}&market=${MARKET}`, pager).then(dedupeById);
 
 /** Fetch every track in a playlist. */
 export const fetchPlaylistTracks = (playlistId: string, pager?: Pager): Promise<Track[]> =>

@@ -222,6 +222,11 @@ export function findSuspectPairs(
         const a = pa.track;
         const b = pb.track;
 
+        // Two entries with the same id are the same track listed twice, never a
+        // suspected pair. planDeletions would remove *both* copies, leaving an empty
+        // removal that toPair's remove[0] reads as undefined — guard before then.
+        if (a.id === b.id) continue;
+
         const groupA = confidentGroup.get(a.id);
         if (groupA !== undefined && groupA === confidentGroup.get(b.id)) continue;
 

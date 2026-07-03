@@ -29,6 +29,19 @@ describe("collect / fetchSavedTracks", () => {
     expect(tracks.map((t) => t.id)).toEqual(["1", "2", "3"]);
   });
 
+  it("de-duplicates repeated track ids across pages, keeping the first occurrence", async () => {
+    // Spotify's /me/tracks paging can hand back the same id twice (library changing
+    // mid-walk, or an outright API quirk). Liked Songs are a set keyed by track id,
+    // and the whole duplicate/suspect pipeline assumes ids are unique — a repeated id
+    // otherwise leaks past findConfidentDuplicates into findSuspectPairs and crashes.
+    const pager = fakePager([
+      page([item("1"), item("2")], true),
+      page([item("2"), item("3")], false),
+    ]);
+    const tracks = await fetchSavedTracks(pager);
+    expect(tracks.map((t) => t.id)).toEqual(["1", "2", "3"]);
+  });
+
   it("skips items whose track is null", async () => {
     const pager = fakePager([page([item("1"), item(null)], false)]);
     const tracks = await fetchSavedTracks(pager);
