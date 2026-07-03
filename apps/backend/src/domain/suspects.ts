@@ -144,7 +144,7 @@ function groupIndexOf(groups: Track[][]): Map<string, number> {
   return map;
 }
 
-interface Admission {
+export interface Admission {
   score: number;
   hint: string;
 }
@@ -177,7 +177,7 @@ function admit(a: PreparedTrack, b: PreparedTrack): Admission | null {
   return null;
 }
 
-function buildHints(a: Track, b: Track, admitHint: string, keep: Track, remove: Track): string[] {
+export function buildHints(a: Track, b: Track, admitHint: string, keep: Track, remove: Track): string[] {
   const hints = [admitHint];
   if (Math.abs(a.durationMs - b.durationMs) <= DURATION_HINT_MS) hints.push("時長相近");
   if (a.album === b.album) hints.push("同專輯");
@@ -185,7 +185,7 @@ function buildHints(a: Track, b: Track, admitHint: string, keep: Track, remove: 
   return hints;
 }
 
-function toPair(a: Track, b: Track, admission: Admission): SuspectPair {
+export function toPair(a: Track, b: Track, admission: Admission): SuspectPair {
   const { keep, remove } = planDeletions([[a, b]], "popularity").resolutions[0]!;
   const removed = remove[0]!;
   return {

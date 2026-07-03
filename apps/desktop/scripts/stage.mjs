@@ -81,6 +81,25 @@ function copyClosure(pkg, fromPackageJson) {
   for (const dep of Object.keys(deps)) copyClosure(dep, pkgJsonPath);
 }
 
-copyClosure("better-sqlite3", join(repo, "apps", "backend", "package.json"));
+const backendPkg = join(repo, "apps", "backend", "package.json");
+copyClosure("better-sqlite3", backendPkg);
+// The offline embedding stack: onnxruntime-node (prebuilt N-API native — no
+// electron-rebuild, it runs under the forked Node) + transformers.js and their
+// runtime closures, resolved next to server.cjs so require() finds them.
+copyClosure("onnxruntime-node", backendPkg);
+copyClosure("@huggingface/transformers", backendPkg);
+
+// 4. LaBSE model files → build/backend/models (read at runtime via STM_MODEL_PATH).
+//    Optional: absent → the packaged app just runs with cross-language detection off.
+const models = join(repo, "apps", "backend", "models");
+if (existsSync(models)) {
+  cpSync(models, join(build, "backend", "models"), { recursive: true, dereference: true });
+  console.log("staged model →", join(build, "backend", "models"));
+} else {
+  console.warn(
+    "stage: apps/backend/models missing — cross-language detection will be DISABLED in the\n" +
+      "       packaged app. Run `node apps/backend/scripts/fetch-model.mjs` first to include it.",
+  );
+}
 
 console.log("staged →", build, "\nnative deps:", [...copied].join(", "));

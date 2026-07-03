@@ -73,6 +73,13 @@ export const LibrarySchema = z.object({
   tracks: z.array(TrackSchema),
   cleanup: z.array(CleanupGroupSchema),
   suspects: z.array(SuspectPairSchema),
+  /**
+   * True while the cross-language (embedding) suspect pass is still running in the
+   * background: the first snapshot returns immediately with lexical/confident results
+   * and `crossLanguagePending: true`, then flips to false once the embedding pass
+   * merges its pairs into `suspects`. The frontend refetches while this is true.
+   */
+  crossLanguagePending: z.boolean(),
 });
 export type Library = z.infer<typeof LibrarySchema>;
 

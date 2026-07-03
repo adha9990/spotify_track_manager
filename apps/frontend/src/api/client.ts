@@ -15,6 +15,8 @@ export interface LibrarySnapshot {
   cleanup: CleanupGroup[];
   suspects: SuspectPair[];
   fetchedAt: string;
+  /** True while the cross-language suspect pass is still running in the backend; the hook polls until it clears. */
+  crossLanguagePending: boolean;
 }
 
 async function json<T>(input: string, init?: RequestInit): Promise<T> {
