@@ -45,12 +45,22 @@ describe("SuspectPairSchema", () => {
 
 describe("LibrarySchema with suspects", () => {
   it("accepts a library snapshot that includes an empty suspects array", () => {
-    const result = LibrarySchema.safeParse({ tracks: [], cleanup: [], suspects: [] });
+    const result = LibrarySchema.safeParse({
+      tracks: [],
+      cleanup: [],
+      suspects: [],
+      crossLanguagePending: false,
+    });
     expect(result.success).toBe(true);
   });
 
   it("rejects a library snapshot missing the suspects field (now required)", () => {
-    const result = LibrarySchema.safeParse({ tracks: [], cleanup: [] });
+    const result = LibrarySchema.safeParse({ tracks: [], cleanup: [], crossLanguagePending: false });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a library snapshot missing crossLanguagePending (now required)", () => {
+    const result = LibrarySchema.safeParse({ tracks: [], cleanup: [], suspects: [] });
     expect(result.success).toBe(false);
   });
 });

@@ -31,13 +31,18 @@ export function useStatus() {
   });
 }
 
-/** The library. Fetched once; the backend caches the snapshot. */
+/**
+ * The library. Fetched once; the backend caches the snapshot. Cross-language suspects
+ * are computed in the background, so while `crossLanguagePending` is true we re-fetch
+ * the cached snapshot periodically until the pass finishes and merges its pairs in.
+ */
 export function useLibrary(enabled: boolean) {
   return useQuery({
     queryKey: LIBRARY_KEY,
     queryFn: () => getLibrary(false),
     enabled,
     staleTime: Infinity,
+    refetchInterval: (q) => (q.state.data?.crossLanguagePending ? 1500 : false),
   });
 }
 

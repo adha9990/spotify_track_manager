@@ -10,9 +10,16 @@ import type { EmbeddingGateway } from "../ports/embedding-gateway";
 import type { SpotifyGateway } from "../ports/spotify-gateway";
 
 // Orchestrates the Spotify gateway + the pure cleanup/suspects planners, caching the
-// fetched snapshot in memory. Built once at the composition root with concrete
-// adapters, so it depends only on the SpotifyGateway/DismissalStore/EmbeddingCache/
-// EmbeddingGateway ports — never on a concrete adapter directly.
+// fetched snapshot in memory. Cross-language suspect detection (which needs an
+// embedding-model round trip) runs as a BACKGROUND pass: build() returns the lexical
+// snapshot immediately (crossLanguagePending: true) and later swaps in the merged
+// result once the pass settles, so a slow/unavailable model never blocks the
+// request. A monotonic `generation` counter guards that swap: a background pass only
+// writes its result if nothing has superseded the build it belongs to (force
+// refresh, a delete, or a newer build) — otherwise it silently discards its result.
+// Built once at the composition root with concrete adapters, so it depends only on
+// the SpotifyGateway/DismissalStore/EmbeddingCache/EmbeddingGateway ports — never on
+// a concrete adapter directly.
 
 export interface LibrarySnapshot extends Library {
   fetchedAt: string;
@@ -26,6 +33,8 @@ export interface LibraryService {
   /** Record a suspect pair as dismissed and recompute the cached snapshot's suspects, if any. */
   dismiss(pairKey: string, ts: string): void;
   invalidateLibrary(): void;
+  /** Resolves once the in-flight background cross-language pass (if any) has settled; resolves immediately if none is running. */
+  settleCrossLanguage(): Promise<void>;
 }
 
 /** Optional cross-language capability: an EmbeddingCache + EmbeddingGateway pair. Absent, cross-language detection is off. */
@@ -52,6 +61,10 @@ export function createLibraryService(
 ): LibraryService {
   let cache: LibrarySnapshot | null = null;
   let inFlight: Promise<LibrarySnapshot> | null = null;
+  let backgroundPass: Promise<void> | null = null;
+  // Bumped by every operation that replaces or clears the cache, so a background
+  // pass started against an earlier snapshot can detect it has been superseded.
+  let generation = 0;
 
   const dismissedSet = () => new Set(dismissals.list());
 
@@ -74,28 +87,39 @@ export function createLibraryService(
   /**
    * Ensure every track has a fresh embedding vector — cached and matching both the
    * current canonical name and the current model — embedding only the tracks that
-   * are missing or stale, in a single batch call. Never throws: a model failure
-   * (ADR-5 / §10.1) must degrade to "no cross-language pairs this build", not a 500.
+   * are missing or stale, in a single batch call. Throws on a malformed adapter
+   * response (length mismatch) or a model failure; callers (the background pass /
+   * crossLanguageFromCache) catch and degrade per ADR-5 — never a 500.
    */
   async function vectorsFor(tracks: Track[], capability: CrossLanguageEmbedding): Promise<Map<string, number[]>> {
-    try {
-      const { fresh, stale } = freshVectors(tracks, capability);
-      if (stale.length === 0) return fresh;
+    const { fresh, stale } = freshVectors(tracks, capability);
+    if (stale.length === 0) return fresh;
 
-      const embedded = await capability.gateway.embed(stale.map((t) => t.name));
-      const rows = stale.map((track, i) => ({
-        trackId: track.id,
-        vec: embedded[i]!,
-        nameHash: canonical(track.name),
-        model: capability.gateway.modelId,
-      }));
-      capability.cache.put(rows);
-      for (const row of rows) fresh.set(row.trackId, row.vec);
-      return fresh;
-    } catch (err) {
-      console.warn("cross-language embedding failed, skipping cross-language suspects:", err);
-      return new Map();
+    const embedded = await capability.gateway.embed(stale.map((t) => t.name));
+    if (embedded.length !== stale.length) {
+      throw new Error(
+        `embedding gateway returned ${embedded.length} vectors for ${stale.length} inputs — refusing to trust index alignment`,
+      );
     }
+    const rows = stale.map((track, i) => ({
+      trackId: track.id,
+      vec: embedded[i]!,
+      nameHash: canonical(track.name),
+      model: capability.gateway.modelId,
+    }));
+    capability.cache.put(rows);
+    for (const row of rows) fresh.set(row.trackId, row.vec);
+    return fresh;
+  }
+
+  /** Cross-language pairs for the given vectors — the one findCrossLanguagePairs call site shared by both the background pass and the sync cache-only path. */
+  function crossLanguagePairs(
+    tracks: Track[],
+    confidentGroups: Track[][],
+    dismissed: Set<string>,
+    vectors: Map<string, number[]>,
+  ): SuspectPair[] {
+    return findCrossLanguagePairs(tracks, { vectors, confidentGroups, dismissed });
   }
 
   /** Cross-language pass restricted to already-cached vectors (no embedding call) — the sync path applyLocalDelete needs, since ids only ever shrink. */
@@ -103,40 +127,59 @@ export function createLibraryService(
     if (!embed) return [];
     try {
       const { fresh } = freshVectors(tracks, embed);
-      return findCrossLanguagePairs(tracks, { vectors: fresh, confidentGroups, dismissed });
+      return crossLanguagePairs(tracks, confidentGroups, dismissed, fresh);
     } catch (err) {
       console.warn("cross-language lookup failed, skipping cross-language suspects:", err);
       return [];
     }
   }
 
-  async function suspectsFor(tracks: Track[], confidentGroups: Track[][]): Promise<SuspectPair[]> {
-    const dismissed = dismissedSet();
-    const lexical = findSuspectPairs(tracks, { dismissed, confidentGroups });
-    if (!embed) return lexical;
-    // Guard the whole cross-language block (vector lookup + pairing), symmetric with
-    // crossLanguageFromCache: the lexical suspects (and the rest of the snapshot) must
-    // survive any cross-language failure — never a 500 from this newer path (§10.1/ADR-5).
+  /**
+   * Fire-and-forget background cross-language pass for a just-built snapshot: embeds
+   * any stale/missing vectors, computes cross-language pairs, and — only if `gen`
+   * (the generation at build time) is still current — swaps the merged suspects into
+   * the cache and clears crossLanguagePending. Never rejects: any failure degrades to
+   * "lexical suspects only" (ADR-5/§10.1), logged via console.warn.
+   */
+  async function runBackgroundCrossLanguage(
+    capability: CrossLanguageEmbedding,
+    tracks: Track[],
+    confidentGroups: Track[][],
+    lexical: SuspectPair[],
+    gen: number,
+  ): Promise<void> {
     try {
-      const vectors = await vectorsFor(tracks, embed);
-      const crossLanguage = findCrossLanguagePairs(tracks, { vectors, confidentGroups, dismissed });
-      return mergeSuspects(lexical, crossLanguage);
+      const dismissed = dismissedSet();
+      const vectors = await vectorsFor(tracks, capability);
+      const crossLanguage = crossLanguagePairs(tracks, confidentGroups, dismissed, vectors);
+      if (generation !== gen || !cache) return; // superseded by a newer build/delete/invalidate — discard
+      cache = { ...cache, suspects: mergeSuspects(lexical, crossLanguage), crossLanguagePending: false };
     } catch (err) {
-      console.warn("cross-language suspects failed, using lexical suspects only:", err);
-      return lexical;
+      console.warn("cross-language background pass failed, using lexical suspects only:", err);
+      if (generation !== gen || !cache) return;
+      cache = { ...cache, crossLanguagePending: false };
     }
   }
 
   async function build(now: string): Promise<LibrarySnapshot> {
     const tracks = await gateway.fetchSavedTracks();
     const confidentGroups = findConfidentDuplicates(tracks);
+    const dismissed = dismissedSet();
+    const lexical = findSuspectPairs(tracks, { dismissed, confidentGroups });
+
     const snapshot: LibrarySnapshot = {
       tracks,
       cleanup: buildCleanup(tracks, confidentGroups),
-      suspects: await suspectsFor(tracks, confidentGroups),
+      suspects: lexical,
+      crossLanguagePending: Boolean(embed),
       fetchedAt: now,
     };
     cache = snapshot;
+    const gen = ++generation;
+
+    if (embed) {
+      backgroundPass = runBackgroundCrossLanguage(embed, tracks, confidentGroups, lexical, gen);
+    }
     return snapshot;
   }
 
@@ -168,7 +211,9 @@ export function createLibraryService(
         tracks,
         cleanup: buildCleanup(tracks, confidentGroups),
         suspects: mergeSuspects(lexical, crossLanguage),
+        crossLanguagePending: false,
       };
+      generation++; // supersede any background pass still in flight from a prior build
     },
 
     dismiss(pairKey, ts) {
@@ -182,6 +227,11 @@ export function createLibraryService(
 
     invalidateLibrary() {
       cache = null;
+      generation++; // any in-flight background pass now targets a gone snapshot
+    },
+
+    settleCrossLanguage() {
+      return backgroundPass ?? Promise.resolve();
     },
   };
 }
