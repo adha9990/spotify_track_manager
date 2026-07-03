@@ -1,6 +1,6 @@
 import type { CleanupGroup, SuspectPair, Track } from "@stm/shared";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useDeleteTracks, useDismissSuspect, usePlayTrack } from "../hooks/useLibrary";
 import { formatDate, formatDuration } from "../lib/format";
 import { useUi } from "../store/ui";
@@ -18,6 +18,9 @@ import { Dialog } from "./Dialog";
 const ROW_GRID = "32px 88px minmax(160px,1.6fr) minmax(120px,1.2fr) 56px 96px 56px";
 
 const shortReason = (reason: string) => (reason.includes("失效") ? "失效" : "重複");
+
+/** Sanitize an arbitrary pairKey (e.g. "t20|t25") into a valid DOM id fragment. */
+const domId = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "-");
 
 function TrackRow({
   track,
@@ -56,19 +59,29 @@ function TrackRow({
   );
 }
 
-function SuspectCard({ pair, onPlay }: { pair: SuspectPair; onPlay: (id: string) => void }) {
+function SuspectCard({
+  pair,
+  onPlay,
+  onResolved,
+}: {
+  pair: SuspectPair;
+  onPlay: (id: string) => void;
+  /** Called after a dismiss or a confirmed removal succeeds, with the message to announce. */
+  onResolved: (message: string) => void;
+}) {
   const [confirming, setConfirming] = useState(false);
   const del = useDeleteTracks();
   const dismiss = useDismissSuspect();
+  const headingId = `suspect-${domId(pair.pairKey)}-heading`;
 
   return (
     <div className="rounded-lg border border-stone-200 bg-white/60">
       <div className="border-b border-stone-200/70 px-3 py-2">
-        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+        <h3 id={headingId} className="flex flex-wrap items-center gap-2 text-sm font-semibold">
           <span className="truncate">{pair.keep.name}</span>
           <Icon name="swap" className="h-3.5 w-3.5 shrink-0 text-stone-400" />
           <span className="truncate text-stone-500">{pair.remove.name}</span>
-        </div>
+        </h3>
         {pair.hints.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
             {pair.hints.map((hint) => (
@@ -88,11 +101,22 @@ function SuspectCard({ pair, onPlay }: { pair: SuspectPair; onPlay: (id: string)
           size="sm"
           variant="ghost"
           disabled={dismiss.isPending}
-          onClick={() => dismiss.mutate(pair.pairKey)}
+          aria-label={`不是重複：${pair.keep.name}／${pair.remove.name}`}
+          onClick={() =>
+            dismiss.mutate(pair.pairKey, {
+              onSuccess: () => onResolved("已標記為不是重複"),
+            })
+          }
         >
           不是重複
         </Button>
-        <Button size="sm" variant="danger" disabled={del.isPending} onClick={() => setConfirming(true)}>
+        <Button
+          size="sm"
+          variant="danger"
+          disabled={del.isPending}
+          aria-label={`確認移除：${pair.remove.name}`}
+          onClick={() => setConfirming(true)}
+        >
           確認移除
         </Button>
       </div>
@@ -110,7 +134,14 @@ function SuspectCard({ pair, onPlay }: { pair: SuspectPair; onPlay: (id: string)
           <Button
             variant="primary"
             disabled={del.isPending}
-            onClick={() => del.mutate([pair.remove.id], { onSuccess: () => setConfirming(false) })}
+            onClick={() =>
+              del.mutate([pair.remove.id], {
+                onSuccess: () => {
+                  setConfirming(false);
+                  onResolved("已移除 1 首歌曲,可在歷史中復原");
+                },
+              })
+            }
           >
             {del.isPending ? "移除中…" : "確認移除"}
           </Button>
@@ -120,12 +151,25 @@ function SuspectCard({ pair, onPlay }: { pair: SuspectPair; onPlay: (id: string)
   );
 }
 
+const GROUPS_HEADING_ID = "cleanup-groups-heading";
+const SUSPECTS_HEADING_ID = "cleanup-suspects-heading";
+
 export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; suspects: SuspectPair[] }) {
   const [confirming, setConfirming] = useState(false);
   const del = useDeleteTracks();
   const play = usePlayTrack();
   const excluded = useUi((s) => s.cleanupExcluded);
   const toggleGroup = useUi((s) => s.toggleCleanupGroup);
+  const [liveMessage, setLiveMessage] = useState("");
+  const suspectsHeadingRef = useRef<HTMLHeadingElement>(null);
+
+  // Both resolution paths (dismiss, and confirmed removal via the Dialog) route through
+  // here so the live region announces the outcome and focus returns to the section the
+  // now-unmounting card belonged to.
+  const onSuspectResolved = (message: string) => {
+    setLiveMessage(message);
+    suspectsHeadingRef.current?.focus();
+  };
 
   if (groups.length === 0 && suspects.length === 0) {
     return (
@@ -146,13 +190,20 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto pr-1">
+      <div aria-live="polite" className="sr-only">
+        {liveMessage}
+      </div>
+
       {play.isError && (
         <p className="text-xs text-red-700">無法播放:請先開啟 Spotify 播放器(需 Premium)。</p>
       )}
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-stone-400">
-          可一鍵清理(確定同曲)
+      <section aria-labelledby={GROUPS_HEADING_ID} className="flex flex-col gap-3">
+        <h2
+          id={GROUPS_HEADING_ID}
+          className="text-xs font-semibold uppercase tracking-wide text-stone-400"
+        >
+          可一鍵清理(確定同曲) {groups.length} 組
         </h2>
 
         {groups.length === 0 ? (
@@ -161,7 +212,7 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
           </p>
         ) : (
           <>
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3">
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
               <p className="text-sm text-amber-900">
                 找到 <span className="font-semibold nums">{groups.length}</span> 組重複,已勾選{" "}
                 <span className="font-semibold nums">{removalIds.length}</span>{" "}
@@ -218,9 +269,14 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
         )}
       </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-stone-400">
-          疑似重複(需逐組確認)
+      <section aria-labelledby={SUSPECTS_HEADING_ID} className="flex flex-col gap-3">
+        <h2
+          id={SUSPECTS_HEADING_ID}
+          ref={suspectsHeadingRef}
+          tabIndex={-1}
+          className="text-xs font-semibold uppercase tracking-wide text-stone-400"
+        >
+          疑似重複(需逐組確認) {suspects.length} 組
         </h2>
 
         {suspects.length === 0 ? (
@@ -230,7 +286,7 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
         ) : (
           <div className="space-y-3">
             {suspects.map((pair) => (
-              <SuspectCard key={pair.pairKey} pair={pair} onPlay={onPlay} />
+              <SuspectCard key={pair.pairKey} pair={pair} onPlay={onPlay} onResolved={onSuspectResolved} />
             ))}
           </div>
         )}

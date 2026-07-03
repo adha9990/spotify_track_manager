@@ -71,14 +71,14 @@ const suspects = [
   {
     keep: tracks[19], // Lemon
     remove: tracks[24], // Lemon - Live
-    pairKey: "t20:t25",
+    pairKey: [tracks[19].id, tracks[24].id].sort().join("|"),
     score: 0.82,
     hints: ["版本差異", "時長相近"],
   },
   {
     keep: tracks[14], // 晴天
     remove: tracks[25], // 晴天 (加長版) — 已失效
-    pairKey: "t15:t26",
+    pairKey: [tracks[14].id, tracks[25].id].sort().join("|"),
     score: 0.58,
     hints: ["名稱相近", "庫中已有相似曲"],
   },
