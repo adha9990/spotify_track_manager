@@ -41,11 +41,12 @@ export function Button({ variant = "outline", size = "md", className, ...rest }:
   );
 }
 
-export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "accent" | "warn" }) {
+export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "neutral" | "accent" | "warn" | "ok" }) {
   const tones = {
     neutral: "bg-stone-200/70 text-stone-600",
     accent: "bg-accent/10 text-accent",
     warn: "bg-amber-100 text-amber-800",
+    ok: "bg-emerald-100 text-emerald-700",
   } as const;
   return (
     <span className={cx("rounded-full px-2 py-0.5 text-[11px] font-semibold nums", tones[tone])}>

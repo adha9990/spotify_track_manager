@@ -15,6 +15,8 @@ interface UiState {
   sortKey: SortKey;
   sortDir: SortDir;
   selected: Set<string>;
+  /** Cleanup groups the user unchecked (key = keep.id). Stale ids are ignored at read time. */
+  cleanupExcluded: Set<string>;
 
   setTab: (tab: Tab) => void;
   setSearch: (search: string) => void;
@@ -22,6 +24,7 @@ interface UiState {
   toggleSelect: (id: string) => void;
   selectMany: (ids: string[], on: boolean) => void;
   clearSelection: () => void;
+  toggleCleanupGroup: (keepId: string) => void;
 }
 
 export const useUi = create<UiState>((set) => ({
@@ -30,6 +33,7 @@ export const useUi = create<UiState>((set) => ({
   sortKey: "added",
   sortDir: "desc",
   selected: new Set(),
+  cleanupExcluded: new Set(),
 
   setTab: (tab) => set({ tab, search: "", selected: new Set() }),
   setSearch: (search) => set({ search }),
@@ -52,4 +56,10 @@ export const useUi = create<UiState>((set) => ({
       return { selected: next };
     }),
   clearSelection: () => set({ selected: new Set() }),
+  toggleCleanupGroup: (keepId) =>
+    set((s) => {
+      const next = new Set(s.cleanupExcluded);
+      next.has(keepId) ? next.delete(keepId) : next.add(keepId);
+      return { cleanupExcluded: next };
+    }),
 }));

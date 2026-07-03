@@ -22,7 +22,11 @@ export default function App() {
   const unplayable = useMemo(() => tracks.filter((t) => !t.isPlayable), [tracks]);
   const visible = useVisibleTracks(prepared); // hook — must run every render
 
-  const counts = { all: tracks.length, cleanup: cleanup.length, unplayable: unplayable.length };
+  const counts = {
+    all: tracks.length,
+    cleanup: cleanup.reduce((n, g) => n + g.removals.length, 0),
+    unplayable: unplayable.length,
+  };
   const snap = library.data;
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -75,7 +79,7 @@ export default function App() {
             )}
             {tab === "cleanup" && (
               <div className="flex min-h-0 flex-1 flex-col pt-4">
-                <CleanupView items={cleanup} />
+                <CleanupView groups={cleanup} />
               </div>
             )}
             {tab === "unplayable" && (

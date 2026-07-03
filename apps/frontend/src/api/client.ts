@@ -1,4 +1,4 @@
-import type { CleanupItem, HistoryBatch, SearchResult, Track } from "@stm/shared";
+import type { CleanupGroup, HistoryBatch, SearchResult, Track } from "@stm/shared";
 
 // Thin typed wrapper over the local backend (vite proxies /api → 127.0.0.1:8765).
 // Every call throws on a non-2xx so TanStack Query surfaces it as an error state.
@@ -12,7 +12,7 @@ export interface Status {
 
 export interface LibrarySnapshot {
   tracks: Track[];
-  cleanup: CleanupItem[];
+  cleanup: CleanupGroup[];
   fetchedAt: string;
 }
 
