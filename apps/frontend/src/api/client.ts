@@ -1,4 +1,4 @@
-import type { CleanupGroup, HistoryBatch, SearchResult, Track } from "@stm/shared";
+import type { CleanupGroup, HistoryBatch, SearchResult, SuspectPair, Track } from "@stm/shared";
 
 // Thin typed wrapper over the local backend (vite proxies /api → 127.0.0.1:8765).
 // Every call throws on a non-2xx so TanStack Query surfaces it as an error state.
@@ -13,6 +13,7 @@ export interface Status {
 export interface LibrarySnapshot {
   tracks: Track[];
   cleanup: CleanupGroup[];
+  suspects: SuspectPair[];
   fetchedAt: string;
 }
 
@@ -53,6 +54,12 @@ export const playTrack = (id: string) =>
 
 export const getHistory = () =>
   json<{ batches: HistoryBatch[] }>("/api/history").then((r) => r.batches);
+
+export const dismissSuspect = (pairKey: string) =>
+  json<{ dismissed: boolean }>("/api/suspects/dismiss", {
+    method: "POST",
+    body: JSON.stringify({ pairKey }),
+  });
 
 export const undoBatch = (batchId: string) =>
   json<{ undone: number }>("/api/history/undo", {
