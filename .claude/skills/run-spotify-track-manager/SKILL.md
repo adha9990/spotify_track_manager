@@ -50,29 +50,46 @@ curl -s http://localhost:5173/api/library | head -c 120
 
 Then drive `http://localhost:5173`. All interactions below were exercised with the
 Playwright MCP (targets are ARIA roles/names; tab names include the count badge,
-e.g. button `清理建議 3` — partial name match works):
+e.g. button `清理建議 6` — partial name match works):
 
-- **Tabs**: buttons `全部收藏 24` / `清理建議 3` / `失效歌曲 3`.
+- **Tabs**: buttons `全部收藏 28` / `清理建議 6` / `失效歌曲 4`. The `清理建議`
+  badge is cleanup-group removal count (4) plus suspect-pair count (2), not the
+  group count.
 - **Search**: fill textbox `搜尋歌曲、歌手、專輯…` with `周杰倫` → counter drops
-  `24 首` → `4 首` (fuzzy-filters the virtual table). Fill `""` to clear.
-- **清理建議**: 3 groups rendered keep/remove side-by-side (`保留` vs `移除·重複`
-  badges, per-row `試聽` button). Each group has a checkbox named like
-  `起風了 — 買辣椒也用券 2 個版本`; unchecking it drops the button from
-  `一鍵清理 (3)` to `一鍵清理 (2)`. Clicking it opens the Radix dialog `確認清理`;
-  `確認移除 2 首` POSTs and closes.
-- **失效歌曲**: 3 rows, each with `尋找替代` + `移除`. `尋找替代` opens dialog
+  `28 首` → `5 首` (fuzzy-filters the virtual table). Fill `""` to clear.
+- **清理建議**: two sections.
+  - `可一鍵清理(確定同曲) 4 組` — same as before: each group renders keep/remove
+    side-by-side (`保留` vs `移除·重複` badges, per-row `試聽` button). Each
+    group has a checkbox named like `起風了 — 買辣椒也用券 2 個版本` (one group
+    is a 繁/簡 pair, `演員`/`演员`); unchecking it drops the button from
+    `一鍵清理 (4)` to `一鍵清理 (3)`. Clicking it opens the Radix dialog
+    `確認清理`; `確認移除 4 首` POSTs and closes.
+  - `疑似重複(需逐組確認) 2 組` — one card per pair, below the groups section.
+    Each card shows `建議保留` / `疑似多餘` badges and hint `Badge`s (e.g.
+    `版本差異`, `時長相近`, `庫中已有相似曲`). Button `不是重複：<keep 曲名>／
+    <remove 曲名>` (its accessible name via `aria-label`) removes the pair
+    immediately (POSTs `/api/suspects/dismiss`). Button `確認移除：<remove 曲名>`
+    opens a per-pair Radix dialog titled `確認移除`; confirming POSTs
+    `/api/tracks/delete` for just that one track and the card disappears.
+- **失效歌曲**: 4 rows, each with `尋找替代` + `移除`. `尋找替代` opens dialog
   `尋找替代版本` with the query prefilled (e.g. `她說 林俊傑`); results show
   duration (`4:14`) with per-row `試聽` and `替換`.
 - **歷史** (header button): dialog `操作歷史` — per-batch `復原` buttons; already
   undone batches show `已復原`.
 
-The mock serves `GET /api/status`, `/api/library` (tracks **and** cleanup groups),
-`/api/history`, `/api/search`, `/health`; **every POST returns `{ok:true,...}` and
-mutates nothing** — destructive buttons are safe to click, and the data is static
-(after "confirming" a cleanup, the refetch shows the same groups again).
+The mock serves `GET /api/status`, `/api/library` (tracks, cleanup groups **and**
+suspects), `/api/history`, `/api/search`, `/health`. Two POSTs are **stateful**:
+`POST /api/tracks/delete` removes the ids from `tracks`/`cleanup`/`suspects` in
+memory and appends a history batch; `POST /api/suspects/dismiss` drops the
+matching pair from `suspects`. Both only mutate the mock server's own process
+memory — restart it to reset. Every other POST (`add`, `play`, `undo`) still
+replies `{ok:true}` and mutates nothing.
 
 Reference screenshots taken this way live in this skill dir: `screenshot.png`
-(全部收藏) and `screenshot-cleanup.png` (清理建議 keep/remove view).
+(全部收藏) and `screenshot-cleanup.png` (清理建議 keep/remove view). Both were
+taken before 清理建議 split into two sections — `screenshot-cleanup.png` only
+shows the single-section layout and needs a retake to reflect the groups +
+suspects split.
 
 ## Run — real backend standalone (no GUI, no login)
 
