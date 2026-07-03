@@ -63,11 +63,18 @@ function SuspectCard({
   pair,
   onPlay,
   onResolved,
+  onFocusSuspectsHeading,
 }: {
   pair: SuspectPair;
   onPlay: (id: string) => void;
   /** Called after a dismiss or a confirmed removal succeeds, with the message to announce. */
   onResolved: (message: string) => void;
+  /**
+   * Moves focus to the suspects section heading. For the confirmed-removal path this must
+   * run from the Dialog's onCloseAutoFocus, not from the mutation's onSuccess — see
+   * closedByRemovalRef below for why.
+   */
+  onFocusSuspectsHeading: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const del = useDeleteTracks();
@@ -77,6 +84,12 @@ function SuspectCard({
   // whole card (its trigger button included), so Radix's default onCloseAutoFocus — which
   // returns focus to that trigger — would find nothing and drop focus to <body>. Only
   // suppress it for that case; a user cancel/Escape keeps Radix's normal trigger-refocus.
+  //
+  // The replacement focus call must also live *inside* onCloseAutoFocus rather than in the
+  // mutation's onSuccess: at onSuccess time the Dialog is still open and Radix's focus-scope
+  // trap still has its synchronous document focusin listener attached, so a focus() call made
+  // there gets yanked straight back into the (about to unmount) dialog content. onCloseAutoFocus
+  // fires after the trap's listener has already been torn down, so the focus move sticks.
   const closedByRemovalRef = useRef(false);
 
   return (
@@ -109,7 +122,10 @@ function SuspectCard({
           aria-label={`不是重複：${pair.keep.name} — ${pair.keep.artists[0]}／${pair.remove.name} — ${pair.remove.artists[0]}`}
           onClick={() =>
             dismiss.mutate(pair.pairKey, {
-              onSuccess: () => onResolved(`已標記「${pair.remove.name}」為不是重複`),
+              onSuccess: () => {
+                onResolved(`已標記「${pair.remove.name}」為不是重複`);
+                onFocusSuspectsHeading();
+              },
             })
           }
         >
@@ -134,6 +150,7 @@ function SuspectCard({
         onCloseAutoFocus={(e) => {
           if (closedByRemovalRef.current) {
             e.preventDefault();
+            onFocusSuspectsHeading();
           }
           closedByRemovalRef.current = false;
         }}
@@ -176,10 +193,14 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
   const suspectsHeadingRef = useRef<HTMLHeadingElement>(null);
 
   // Both resolution paths (dismiss, and confirmed removal via the Dialog) route through
-  // here so the live region announces the outcome and focus returns to the section the
-  // now-unmounting card belonged to.
+  // here so the live region announces the outcome. Focus is a separate callback (see
+  // focusSuspectsHeading) because the confirmed-removal path can only apply it once the
+  // Dialog has actually finished unmounting — see the comment on SuspectCard's
+  // closedByRemovalRef for why.
   const onSuspectResolved = (message: string) => {
     setLiveMessage(message);
+  };
+  const focusSuspectsHeading = () => {
     suspectsHeadingRef.current?.focus();
   };
 
@@ -298,7 +319,13 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
         ) : (
           <div className="space-y-3">
             {suspects.map((pair) => (
-              <SuspectCard key={pair.pairKey} pair={pair} onPlay={onPlay} onResolved={onSuspectResolved} />
+              <SuspectCard
+                key={pair.pairKey}
+                pair={pair}
+                onPlay={onPlay}
+                onResolved={onSuspectResolved}
+                onFocusSuspectsHeading={focusSuspectsHeading}
+              />
             ))}
           </div>
         )}
