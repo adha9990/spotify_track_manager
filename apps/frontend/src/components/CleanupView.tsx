@@ -39,7 +39,7 @@ function TrackRow({
       <button
         onClick={() => onPlay(track.id)}
         title="試聽"
-        className="flex h-7 w-7 items-center justify-center rounded-full text-stone-500 hover:bg-accent hover:text-white"
+        className="flex h-7 w-7 scroll-mt-24 items-center justify-center rounded-full text-stone-500 hover:bg-accent hover:text-white"
       >
         <Icon name="play" className="h-3.5 w-3.5" />
       </button>
@@ -73,9 +73,14 @@ function SuspectCard({
   const del = useDeleteTracks();
   const dismiss = useDismissSuspect();
   const headingId = `suspect-${domId(pair.pairKey)}-heading`;
+  // Distinguishes why the confirm dialog is closing: a successful removal unmounts this
+  // whole card (its trigger button included), so Radix's default onCloseAutoFocus — which
+  // returns focus to that trigger — would find nothing and drop focus to <body>. Only
+  // suppress it for that case; a user cancel/Escape keeps Radix's normal trigger-refocus.
+  const closedByRemovalRef = useRef(false);
 
   return (
-    <div className="rounded-lg border border-stone-200 bg-white/60">
+    <div role="group" aria-labelledby={headingId} className="rounded-lg border border-stone-200 bg-white/60">
       <div className="border-b border-stone-200/70 px-3 py-2">
         <h3 id={headingId} className="flex flex-wrap items-center gap-2 text-sm font-semibold">
           <span className="truncate">{pair.keep.name}</span>
@@ -101,10 +106,10 @@ function SuspectCard({
           size="sm"
           variant="ghost"
           disabled={dismiss.isPending}
-          aria-label={`不是重複：${pair.keep.name}／${pair.remove.name}`}
+          aria-label={`不是重複：${pair.keep.name} — ${pair.keep.artists[0]}／${pair.remove.name} — ${pair.remove.artists[0]}`}
           onClick={() =>
             dismiss.mutate(pair.pairKey, {
-              onSuccess: () => onResolved("已標記為不是重複"),
+              onSuccess: () => onResolved(`已標記「${pair.remove.name}」為不是重複`),
             })
           }
         >
@@ -114,7 +119,7 @@ function SuspectCard({
           size="sm"
           variant="danger"
           disabled={del.isPending}
-          aria-label={`確認移除：${pair.remove.name}`}
+          aria-label={`確認移除：${pair.remove.name} — ${pair.remove.artists[0]}`}
           onClick={() => setConfirming(true)}
         >
           確認移除
@@ -126,6 +131,12 @@ function SuspectCard({
         onOpenChange={setConfirming}
         title="確認移除"
         description={`即將從收藏移除「${pair.remove.name} — ${pair.remove.artists.join(", ")}」,保留「${pair.keep.name} — ${pair.keep.artists.join(", ")}」。此動作可在「歷史」中復原。`}
+        onCloseAutoFocus={(e) => {
+          if (closedByRemovalRef.current) {
+            e.preventDefault();
+          }
+          closedByRemovalRef.current = false;
+        }}
       >
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setConfirming(false)}>
@@ -137,8 +148,9 @@ function SuspectCard({
             onClick={() =>
               del.mutate([pair.remove.id], {
                 onSuccess: () => {
+                  closedByRemovalRef.current = true;
                   setConfirming(false);
-                  onResolved("已移除 1 首歌曲,可在歷史中復原");
+                  onResolved(`已移除「${pair.remove.name}」,可在歷史中復原`);
                 },
               })
             }
@@ -244,7 +256,7 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
                         type="checkbox"
                         checked={checked}
                         onChange={() => toggleGroup(g.keep.id)}
-                        className="h-4 w-4 accent-[var(--color-accent)]"
+                        className="h-4 w-4 scroll-mt-24 accent-[var(--color-accent)]"
                       />
                       <span className="truncate text-sm font-semibold">
                         {g.keep.name} — {g.keep.artists.join(", ")}
