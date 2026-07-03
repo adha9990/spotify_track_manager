@@ -54,10 +54,25 @@ export const HistoryBatchSchema = z.object({
 });
 export type HistoryBatch = z.infer<typeof HistoryBatchSchema>;
 
+/**
+ * One suspected-duplicate pair surfaced for human review: the copy we'd keep, the
+ * copy we'd remove, a stable sorted-id `pairKey` to join UI state across refreshes,
+ * a confidence `score`, and the human-readable `hints` that explain the match.
+ */
+export const SuspectPairSchema = z.object({
+  keep: TrackSchema,
+  remove: TrackSchema,
+  pairKey: z.string(),
+  score: z.number(),
+  hints: z.array(z.string()),
+});
+export type SuspectPair = z.infer<typeof SuspectPairSchema>;
+
 /** Library snapshot the backend returns to the frontend. */
 export const LibrarySchema = z.object({
   tracks: z.array(TrackSchema),
   cleanup: z.array(CleanupGroupSchema),
+  suspects: z.array(SuspectPairSchema),
 });
 export type Library = z.infer<typeof LibrarySchema>;
 

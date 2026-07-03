@@ -62,4 +62,13 @@ describe("createLibraryService", () => {
     const snap = await svc.getLibrary("t");
     expect(snap.tracks.map((t) => t.id)).toEqual(["b"]);
   });
+
+  it("snapshot includes a suspects array (placeholder, empty at this stage)", async () => {
+    const svc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [makeTrack({ id: "a" })] }),
+    );
+    const snap = await svc.getLibrary("t");
+    expect(Array.isArray(snap.suspects)).toBe(true);
+    expect(snap.suspects).toEqual([]);
+  });
 });

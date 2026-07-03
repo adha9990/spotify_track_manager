@@ -24,7 +24,8 @@ export function createLibraryService(gateway: SpotifyGateway): LibraryService {
 
   async function build(now: string): Promise<LibrarySnapshot> {
     const tracks = await gateway.fetchSavedTracks();
-    const snapshot: LibrarySnapshot = { tracks, cleanup: buildCleanup(tracks), fetchedAt: now };
+    // Suspects computation lands in T5; placeholder keeps the contract satisfied until then.
+    const snapshot: LibrarySnapshot = { tracks, cleanup: buildCleanup(tracks), suspects: [], fetchedAt: now };
     cache = snapshot;
     return snapshot;
   }
@@ -45,7 +46,7 @@ export function createLibraryService(gateway: SpotifyGateway): LibraryService {
       if (!cache) return;
       const removed = new Set(ids);
       const tracks = cache.tracks.filter((t: Track) => !removed.has(t.id));
-      cache = { ...cache, tracks, cleanup: buildCleanup(tracks) };
+      cache = { ...cache, tracks, cleanup: buildCleanup(tracks), suspects: [] };
     },
 
     invalidateLibrary() {
