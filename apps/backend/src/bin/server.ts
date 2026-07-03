@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import { Dismissals } from "../adapters/db/dismissals";
 import { History } from "../adapters/db/history";
 import { spotifyGateway } from "../adapters/spotify/gateway";
 import { registerRoutes } from "../http/routes";
@@ -22,8 +23,10 @@ async function main(): Promise<void> {
   // routes. This is the only layer that touches adapters; everything inward depends
   // on ports. Swapping an implementation (e.g. a fake gateway in a test) happens here.
   const gateway = spotifyGateway;
-  const history = new History(process.env.STM_DB_PATH ?? "stm_history.db");
-  const library = createLibraryService(gateway);
+  const dbPath = process.env.STM_DB_PATH ?? "stm_history.db";
+  const history = new History(dbPath);
+  const dismissals = new Dismissals(dbPath);
+  const library = createLibraryService(gateway, dismissals);
   await registerRoutes(app, { library, history, gateway });
 
   const port = Number(process.env.PORT ?? 8765);
