@@ -1,10 +1,12 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { Dismissals } from "../adapters/db/dismissals";
+import { Embeddings } from "../adapters/db/embeddings";
 import { History } from "../adapters/db/history";
+import { createLabseGateway } from "../adapters/embedding/labse";
 import { spotifyGateway } from "../adapters/spotify/gateway";
 import { registerRoutes } from "../http/routes";
-import { createLibraryService } from "../services/library-service";
+import { createLibraryService, type CrossLanguageEmbedding } from "../services/library-service";
 
 // Standalone dev: load SPOTIFY_CLIENT_ID from a local apps/backend/.env (gitignored).
 // In the packaged app, Electron passes SPOTIFY_CLIENT_ID and SPOTIFY_REFRESH_TOKEN
@@ -26,7 +28,18 @@ async function main(): Promise<void> {
   const dbPath = process.env.STM_DB_PATH ?? "stm_history.db";
   const history = new History(dbPath);
   const dismissals = new Dismissals(dbPath);
-  const library = createLibraryService(gateway, dismissals);
+
+  // Cross-language duplicate detection is opt-in on a local model being present:
+  // STM_MODEL_PATH is set by the desktop shell (packaged: resources; dev: repo).
+  // Absent → no embedding capability injected → cross-language detection is simply
+  // off (lexical + confident detection unaffected). The gateway itself loads lazily,
+  // so even a set-but-missing model can't crash boot — the service degrades on embed.
+  const modelPath = process.env.STM_MODEL_PATH;
+  const embed: CrossLanguageEmbedding | undefined = modelPath
+    ? { cache: new Embeddings(dbPath), gateway: createLabseGateway({ modelPath }) }
+    : undefined;
+
+  const library = createLibraryService(gateway, dismissals, embed);
   await registerRoutes(app, { library, history, gateway });
 
   const port = Number(process.env.PORT ?? 8765);

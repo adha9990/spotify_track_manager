@@ -12,12 +12,21 @@ function serverPath(): string {
 }
 
 export function startBackend(clientId: string, refreshToken: string, port: number): void {
+  // The offline LaBSE model ships beside the backend bundle: packaged under
+  // resources/backend/models (staged there by scripts/stage.mjs), in dev under
+  // apps/backend/models (fetched by scripts/fetch-model.mjs). transformers.js then
+  // loads <STM_MODEL_PATH>/Xenova/LaBSE/… fully offline. Absent → cross-language off.
+  const modelPath = app.isPackaged
+    ? path.join(process.resourcesPath, "backend", "models")
+    : path.join(__dirname, "../../backend/models");
+
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     SPOTIFY_CLIENT_ID: clientId,
     SPOTIFY_REFRESH_TOKEN: refreshToken,
     PORT: String(port),
     STM_DB_PATH: path.join(app.getPath("userData"), "stm_history.db"),
+    STM_MODEL_PATH: modelPath,
   };
   const options = app.isPackaged
     ? { env: { ...env, ELECTRON_RUN_AS_NODE: "1" } }
