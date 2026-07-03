@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { canonical } from "../domain/canonical";
 import { makeTrack } from "../domain/fixtures";
 import type { CachedEmbedding, EmbeddingCache } from "../ports/embedding-cache";
@@ -567,6 +567,7 @@ describe("createLibraryService — cross-language suspects (T5, BACKGROUND contr
     // Arrange: embed always returns [] regardless of how many texts it's given — a malformed
     // adapter response the service must never trust index-for-index.
     const cache = fakeEmbeddingCache();
+    const putSpy = vi.spyOn(cache, "put");
     const gateway = fakeEmbeddingGateway({}, { impl: async () => [] });
     const svc = createLibraryService(
       fakeGateway({ fetchSavedTracks: async () => [lemon(), lemonLive(), balloon(), bubble()] }),
@@ -583,5 +584,83 @@ describe("createLibraryService — cross-language suspects (T5, BACKGROUND contr
     expect(snap.crossLanguagePending).toBe(false);
     expect(snap.suspects.some((p) => p.pairKey === crossLangPairKey)).toBe(false);
     expect(snap.suspects.some((p) => p.pairKey === suspectPairKey)).toBe(true);
+
+    // Assert (F2 strengthening): the malformed (length-mismatched) response must never be persisted —
+    // no cache.put call at all, and a cache lookup for the stale ids (s1,s2,z1,z2, all missing pre-test)
+    // comes back empty, proving no undefined/garbled vector slipped into the cache.
+    expect(putSpy).not.toHaveBeenCalled();
+    expect(cache.get(["s1", "s2", "z1", "z2"]).size).toBe(0);
+  });
+});
+
+// REGRESSION: DISMISS-vs-BACKGROUND lost-update — a user dismissal that lands while
+// the background cross-language pass is still in flight must survive the pass's
+// swap-in. Today runBackgroundCrossLanguage merges its build-time-captured `lexical`
+// array (frozen before the dismiss happened) back into the cache, resurrecting a pair
+// the user just told the app to forget. This test is expected to FAIL until the
+// service re-reads live dismissals (or the live cached suspects) at swap time instead
+// of trusting the stale `lexical` closure.
+describe("createLibraryService — dismiss-vs-background lost update (regression)", () => {
+  it("a pair dismissed while the background cross-language pass is in flight stays dismissed once the pass settles", async () => {
+    // Arrange: a lexical suspect pair (s1|s2) plus cross-language capability whose embed
+    // call we control manually, so we can dismiss WHILE the background pass is pending.
+    const cache = fakeEmbeddingCache();
+    const gateway = deferredEmbeddingGateway({});
+    const svc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [lemon(), lemonLive()] }),
+      fakeDismissalStore(),
+      { cache, gateway },
+    );
+
+    // Act (step 1): first snapshot is lexical-only and the background pass is still pending.
+    const snap = await svc.getLibrary("t");
+    expect(snap.suspects.some((p) => p.pairKey === suspectPairKey)).toBe(true);
+    expect(snap.crossLanguagePending).toBe(true);
+
+    // Act (step 2): the user dismisses the pair BEFORE the background pass resolves.
+    svc.dismiss(suspectPairKey, "2026-01-01T00:00:00Z");
+
+    // Act (step 3): now let the background pass settle.
+    gateway.resolve();
+    await svc.settleCrossLanguage();
+
+    // Assert (step 4): the dismissal must stick — the background swap must not resurrect it.
+    const after = await svc.getLibrary("t");
+    expect(after.suspects.some((p) => p.pairKey === suspectPairKey)).toBe(false);
+  });
+});
+
+// REGRESSION-GUARD (pin, not a bug): a background cross-language pass that resolves
+// AFTER it has been superseded (by a delete / force-refresh / newer build bumping the
+// generation counter) must discard its result entirely rather than writing a stale
+// merge over the newer cache state.
+describe("createLibraryService — generation guard discards a stale background write", () => {
+  it("a background pass superseded by applyLocalDelete before it resolves never reintroduces a pair for the deleted track", async () => {
+    // Arrange: a cross-language pair (z1|z2) via a deferred embed we control manually.
+    const cache = fakeEmbeddingCache();
+    const gateway = deferredEmbeddingGateway({ 告白氣球: [1, 0], Bubble: [1, 0] });
+    const svc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [balloon(), bubble()] }),
+      fakeDismissalStore(),
+      { cache, gateway },
+    );
+
+    // Act: kick off the background pass (deferred, unresolved).
+    await svc.getLibrary("t");
+
+    // Act: supersede it before the embed resolves — delete one member of the pair,
+    // which bumps the generation counter.
+    svc.applyLocalDelete(["z1"]);
+
+    // Act: only now let the stale background pass resolve.
+    gateway.resolve();
+    await svc.settleCrossLanguage();
+    const after = await svc.getLibrary("t");
+
+    // Assert: the stale result was discarded — no pair referencing the deleted track,
+    // and the cache reflects the delete's own (synchronous) recomputation, never pending.
+    expect(after.suspects.some((p) => p.pairKey === crossLangPairKey)).toBe(false);
+    expect(after.tracks.some((t) => t.id === "z1")).toBe(false);
+    expect(after.crossLanguagePending).toBe(false);
   });
 });

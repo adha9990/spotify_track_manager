@@ -149,11 +149,20 @@ export function createLibraryService(
     gen: number,
   ): Promise<void> {
     try {
-      const dismissed = dismissedSet();
       const vectors = await vectorsFor(tracks, capability);
+      // Read dismissals AFTER the embedding round trip, not before: a dismiss()
+      // can land while this pass awaits the gateway, and reading it up front
+      // would miss that dismissal entirely.
+      const dismissed = dismissedSet();
       const crossLanguage = crossLanguagePairs(tracks, confidentGroups, dismissed, vectors);
       if (generation !== gen || !cache) return; // superseded by a newer build/delete/invalidate — discard
-      cache = { ...cache, suspects: mergeSuspects(lexical, crossLanguage), crossLanguagePending: false };
+      // A dismiss() can land while this pass is awaiting embeddings; it filters
+      // cache.suspects but doesn't bump generation (that would discard the
+      // cross-language result). Re-filter the captured `lexical` against the
+      // freshly-read `dismissed` set so we don't overwrite that dismissal with
+      // stale, build-time lexical data when swapping into the cache.
+      const freshLexical = lexical.filter((p) => !dismissed.has(p.pairKey));
+      cache = { ...cache, suspects: mergeSuspects(freshLexical, crossLanguage), crossLanguagePending: false };
     } catch (err) {
       console.warn("cross-language background pass failed, using lexical suspects only:", err);
       if (generation !== gen || !cache) return;

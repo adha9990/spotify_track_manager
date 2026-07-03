@@ -234,14 +234,22 @@ describe("findCrossLanguagePairs — a NaN-producing vector is never admitted (F
     expect(pairs.some((p) => Number.isNaN(p.score))).toBe(false);
   });
 
-  it("does not pair (and never emits a NaN score) when both vectors are the zero vector", () => {
+  // A [0,0] vs [0,0] case does NOT actually reproduce the bug this guard exists for:
+  // a plain dot product of two zero vectors is 0 (not NaN), so `cosine < threshold`
+  // already rejects it under the old (unguarded) code too — it proves nothing about
+  // the NaN guard specifically. This case instead uses a vector whose magnitude is
+  // itself infinite, so dotProduct/(|a|*|b|) genuinely evaluates to NaN (Infinity *
+  // 0 = NaN in the dot product, and any further division by Infinity is NaN too) —
+  // a case the naive `cosine < threshold` comparison would silently ADMIT, since
+  // `NaN < threshold` is `false` in JS and would fall through to accepting the pair.
+  it("does not pair (and never emits a NaN score) when a vector's dot product/cosine evaluates to NaN via infinite components", () => {
     const tracks = [
       makeTrack({ id: "1", name: "告白氣球", artists: ["周杰倫"], durationMs: 200_000 }),
       makeTrack({ id: "2", name: "Bubble", artists: ["Jay Chou"], durationMs: 200_500 }),
     ];
     const vectors = new Map<string, number[]>([
-      ["1", [0, 0]],
-      ["2", [0, 0]],
+      ["1", [Infinity, -Infinity]],
+      ["2", [1, 0]],
     ]);
 
     const pairs = findCrossLanguagePairs(tracks, {
