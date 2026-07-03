@@ -114,7 +114,6 @@ export function CleanupView({ groups }: { groups: CleanupGroup[] }) {
                   checked={checked}
                   onChange={() => toggleGroup(g.keep.id)}
                   className="h-4 w-4 accent-[var(--color-accent)]"
-                  aria-label="納入清理"
                 />
                 <span className="truncate text-sm font-semibold">
                   {g.keep.name} — {g.keep.artists.join(", ")}
