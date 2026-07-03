@@ -48,11 +48,11 @@ const tracks = [
   track({ id: "t24", name: "成全", artists: ["劉若英"], album: "我等你", popularity: 57, addedAt: "2022-02-22T10:00:00Z" }),
 ];
 
-// Duplicates the cleanup would propose removing (the lower-ranked copy of each pair).
+// Cleanup groups the 清理 tab renders side-by-side (keep + removals with reasons).
 const cleanup = [
-  { id: "t02", name: "起風了", artist: "買辣椒也用券", reason: "重複(已保留同組人氣最高者)" },
-  { id: "t04", name: "我相信", artist: "張杰", reason: "重複(已保留同組人氣最高者)" },
-  { id: "t23", name: "天后", artist: "陳勢安", reason: "重複(已保留同組人氣最高者)" },
+  { keep: tracks[0], removals: [{ track: tracks[1], reason: "重複(已保留同組人氣最高者)" }] }, // 起風了
+  { keep: tracks[2], removals: [{ track: tracks[3], reason: "重複(已保留同組人氣最高者)" }] }, // 我相信
+  { keep: tracks[4], removals: [{ track: tracks[22], reason: "重複(已保留同組人氣最高者)" }] }, // 天后
 ];
 
 const routes = {
@@ -81,8 +81,8 @@ createServer((req, res) => {
   if (routes[key]) return res.end(JSON.stringify(routes[key]()));
   if (url.pathname === "/api/search")
     return res.end(JSON.stringify({ results: [
-      { id: "r1", name: "她說 (2023 重新錄音)", artist: "林俊傑", album: "她說" },
-      { id: "r2", name: "她說 (Live)", artist: "林俊傑", album: "演唱會實況" },
+      { id: "r1", name: "她說 (2023 重新錄音)", artist: "林俊傑", album: "她說", durationMs: 254000 },
+      { id: "r2", name: "她說 (Live)", artist: "林俊傑", album: "演唱會實況", durationMs: 271000 },
     ] }));
   if (req.method === "POST") return res.end(JSON.stringify({ ok: true, deleted: 0, added: 0 }));
   res.statusCode = 404;
