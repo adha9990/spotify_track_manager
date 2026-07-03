@@ -413,6 +413,19 @@ describe("findSuspectPairs — empty and singleton libraries yield no pairs (C2)
   });
 });
 
+describe("findSuspectPairs — degenerate same-id input never crashes (defense in depth)", () => {
+  it("skips a pair of two tracks that share the same id instead of crashing on an empty removal", () => {
+    // A repeated id collapses in mergeGroups (byId), so it is NOT a confident group
+    // and would otherwise reach toPair, where planDeletions removes *both* copies and
+    // remove[0] is undefined → "Cannot read properties of undefined (reading 'isPlayable')".
+    const tracks = [
+      makeTrack({ id: "dup", name: "Lemon", artists: ["米津玄師"], isPlayable: true }),
+      makeTrack({ id: "dup", name: "Lemon", artists: ["米津玄師"], isPlayable: false }),
+    ];
+    expect(findSuspectPairs(tracks, { dismissed: new Set() })).toEqual([]);
+  });
+});
+
 describe("findSuspectPairs — pins the C(3,2)=3 pair-count semantics for a 3-way suspect cluster (C3, ADR-3)", () => {
   it("produces 3 pairs for three mutually near-identical tracks by the same artist (original / Live / Remastered)", () => {
     const pairs = findSuspectPairs(
