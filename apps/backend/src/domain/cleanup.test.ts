@@ -63,4 +63,28 @@ describe("buildCleanup", () => {
     expect(byId["dead"]).toContain("已失效");
     expect(byId["low"]).toContain("重複");
   });
+
+  it("keeps the playable Simplified-Chinese copy over a dead Traditional-Chinese copy of the same song (S2)", () => {
+    const groups = buildCleanup([
+      makeTrack({
+        id: "dead-trad",
+        name: "演員",
+        artists: ["薛之謙"],
+        isPlayable: false,
+        popularity: 90,
+      }),
+      makeTrack({
+        id: "alive-simp",
+        name: "演员",
+        artists: ["薛之谦"],
+        isPlayable: true,
+        popularity: 55,
+      }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.keep.id).toBe("alive-simp");
+    expect(groups[0]!.removals).toHaveLength(1);
+    expect(groups[0]!.removals[0]!.track.id).toBe("dead-trad");
+    expect(groups[0]!.removals[0]!.reason).toContain("已失效");
+  });
 });
