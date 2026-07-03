@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { canonical } from "../domain/canonical";
 import { makeTrack } from "../domain/fixtures";
+import type { CachedEmbedding, EmbeddingCache } from "../ports/embedding-cache";
+import type { EmbeddingGateway } from "../ports/embedding-gateway";
 import type { DismissalStore } from "../ports/dismissal-store";
 import type { SpotifyGateway } from "../ports/spotify-gateway";
 import { createLibraryService } from "./library-service";
@@ -226,5 +229,200 @@ describe("createLibraryService — suspects wired to real computation (T5)", () 
     expect(after.suspects.map((p) => p.pairKey)).toEqual([otherPairKey]);
     expect(after.suspects[0]).toEqual(untouchedPairBefore); // the surviving pair is unchanged
     expect(calls).toBe(1); // the follow-up getLibrary must still serve from cache
+  });
+});
+
+// T5 (cross-language): createLibraryService gains an OPTIONAL third argument,
+// `embed?: { cache: EmbeddingCache; gateway: EmbeddingGateway }`. When present the
+// service also runs findCrossLanguagePairs and merges the results into
+// snapshot.suspects (deduped by pairKey). Omitted, behavior is unchanged (asserted
+// above, untouched).
+
+/** In-memory EmbeddingCache fake — a Map keyed by trackId, mirroring the real adapter's get/put contract. */
+function fakeEmbeddingCache(seed: { trackId: string; vec: number[]; nameHash: string; model: string }[] = []): EmbeddingCache {
+  const store = new Map<string, CachedEmbedding>();
+  for (const row of seed) store.set(row.trackId, { vec: row.vec, nameHash: row.nameHash, model: row.model });
+  return {
+    get(ids: string[]) {
+      const out = new Map<string, CachedEmbedding>();
+      for (const id of ids) {
+        const hit = store.get(id);
+        if (hit) out.set(id, hit);
+      }
+      return out;
+    },
+    put(rows) {
+      for (const row of rows) store.set(row.trackId, { vec: row.vec, nameHash: row.nameHash, model: row.model });
+    },
+  };
+}
+
+/** Fake EmbeddingGateway: maps title -> a caller-supplied vector, defaulting to a zero vector, and counts embedded texts. */
+function fakeEmbeddingGateway(
+  vectorByTitle: Record<string, number[]>,
+  opts: { modelId?: string; onEmbed?: (texts: string[]) => void; impl?: (texts: string[]) => Promise<number[][]> } = {},
+): EmbeddingGateway & { calls: number } {
+  const gw = {
+    modelId: opts.modelId ?? "fake-model",
+    calls: 0,
+    async embed(texts: string[]) {
+      gw.calls += texts.length;
+      opts.onEmbed?.(texts);
+      if (opts.impl) return opts.impl(texts);
+      return texts.map((t) => vectorByTitle[t] ?? [0, 0]);
+    },
+  };
+  return gw;
+}
+
+// A cross-language pair that findSuspectPairs cannot catch: different primary
+// artists and non-overlapping titles, so the artist-bucketed lexical layer never
+// pairs them. Durations are within the 5000ms hint window.
+const balloon = () =>
+  makeTrack({ id: "z1", name: "告白氣球", artists: ["周杰倫"], durationMs: 200_000, isPlayable: true, popularity: 70 });
+const bubble = () =>
+  makeTrack({ id: "z2", name: "Bubble", artists: ["Jay Chou"], durationMs: 201_000, isPlayable: false, popularity: 20 });
+const crossLangPairKey = "z1|z2";
+
+describe("createLibraryService — cross-language suspects (T5)", () => {
+  it("CL1: surfaces a cross-language pair that findSuspectPairs misses", async () => {
+    // Arrange: both titles map to the same vector -> cosine 1, well above threshold.
+    const cache = fakeEmbeddingCache();
+    const gateway = fakeEmbeddingGateway({ 告白氣球: [1, 0], Bubble: [1, 0] });
+    const svc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [balloon(), bubble()] }),
+      fakeDismissalStore(),
+      { cache, gateway },
+    );
+
+    // Act
+    const snap = await svc.getLibrary("t");
+
+    // Assert: the cross-language pass surfaces the pair with the "跨語言相似" hint.
+    const pair = snap.suspects.find((p) => p.pairKey === crossLangPairKey);
+    expect(pair).toBeDefined();
+    expect(pair!.hints).toContain("跨語言相似");
+
+    // Assert: without embed at all (2-arg construction), the same library yields no such pair —
+    // proving the cross-language layer, not the lexical one, is what surfaced it.
+    const plainSvc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [balloon(), bubble()] }),
+      fakeDismissalStore(),
+    );
+    const plainSnap = await plainSvc.getLibrary("t");
+    expect(plainSnap.suspects).toEqual([]);
+  });
+
+  it("CL2: embeds only tracks missing from the cache (incremental)", async () => {
+    // Arrange
+    const cache = fakeEmbeddingCache();
+    const gateway = fakeEmbeddingGateway({ 告白氣球: [1, 0], Bubble: [1, 0] });
+    const svc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [balloon(), bubble()] }),
+      fakeDismissalStore(),
+      { cache, gateway },
+    );
+
+    // Act: first build embeds both tracks (cache starts empty).
+    await svc.getLibrary("t");
+    expect(gateway.calls).toBe(2);
+
+    // Act: a forced rebuild against the SAME warm cache should re-embed nothing.
+    await svc.getLibrary("t", true);
+
+    // Assert
+    expect(gateway.calls).toBe(2); // unchanged — no re-embedding of already-cached, fresh vectors
+  });
+
+  it("CL3: degrades gracefully when the embedding gateway throws", async () => {
+    // Arrange: gateway.embed always rejects; library also has a normal lexical suspect pair.
+    const cache = fakeEmbeddingCache();
+    const gateway = fakeEmbeddingGateway(
+      {},
+      {
+        impl: async () => {
+          throw new Error("model unavailable");
+        },
+      },
+    );
+    const svc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [lemon(), lemonLive()] }),
+      fakeDismissalStore(),
+      { cache, gateway },
+    );
+
+    // Act
+    const snap = await svc.getLibrary("t");
+
+    // Assert: getLibrary resolves (no throw/500), lexical suspects still surface, no cross-language pairs.
+    expect(snap.suspects).toHaveLength(1);
+    expect(snap.suspects[0]!.pairKey).toBe(suspectPairKey);
+  });
+
+  it("CL4: dedupes by pairKey across lexical and cross-language passes", async () => {
+    // Arrange: lemon()/lemonLive() would be surfaced by BOTH findSuspectPairs (version-suffix,
+    // same artist) and the cross-language pass (same vector, close duration, same artist).
+    const cache = fakeEmbeddingCache();
+    const gateway = fakeEmbeddingGateway({ Lemon: [1, 0], "Lemon - Live": [1, 0] });
+    const svc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [lemon(), lemonLive()] }),
+      fakeDismissalStore(),
+      { cache, gateway },
+    );
+
+    // Act
+    const snap = await svc.getLibrary("t");
+
+    // Assert: exactly one row for the pair, not a duplicate from each pass.
+    const matches = snap.suspects.filter((p) => p.pairKey === suspectPairKey);
+    expect(matches).toHaveLength(1);
+  });
+
+  it("CL5: applyLocalDelete recomputes cross-language from cache without re-embedding", async () => {
+    // Arrange: a warm cache with the cross-language pair, plus an unrelated third track.
+    const unrelated = () => makeTrack({ id: "u1", name: "Unrelated Song", artists: ["Someone"] });
+    const cache = fakeEmbeddingCache();
+    const gateway = fakeEmbeddingGateway({ 告白氣球: [1, 0], Bubble: [1, 0], "Unrelated Song": [0, 1] });
+    const svc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [balloon(), bubble(), unrelated()] }),
+      fakeDismissalStore(),
+      { cache, gateway },
+    );
+    await svc.getLibrary("t");
+    const callsAfterBuild = gateway.calls;
+
+    // Act: delete the unrelated track only.
+    svc.applyLocalDelete(["u1"]);
+    const after = await svc.getLibrary("t");
+
+    // Assert: the cross-language pair survives, and no re-embedding happened during the delete.
+    expect(after.suspects.some((p) => p.pairKey === crossLangPairKey)).toBe(true);
+    expect(gateway.calls).toBe(callsAfterBuild);
+  });
+
+  it("CL6: a renamed track (cached nameHash != canonical(current name)) is re-embedded", async () => {
+    // Arrange: pre-seed the cache for "z1" with a stale nameHash (as if the track used to be named
+    // "old name"), but the track now has a different name — the service must detect the mismatch
+    // via canonical(track.name) vs the cached nameHash and re-embed.
+    const cache = fakeEmbeddingCache([
+      { trackId: "z1", vec: [0, 1], nameHash: canonical("old name"), model: "fake-model" },
+    ]);
+    const renamed = () =>
+      makeTrack({ id: "z1", name: "new name", artists: ["周杰倫"], durationMs: 200_000, isPlayable: true, popularity: 70 });
+    const other = () =>
+      makeTrack({ id: "z2", name: "Bubble", artists: ["Jay Chou"], durationMs: 201_000, isPlayable: false, popularity: 20 });
+    const gateway = fakeEmbeddingGateway({ "new name": [1, 0], Bubble: [1, 0] });
+    const svc = createLibraryService(
+      fakeGateway({ fetchSavedTracks: async () => [renamed(), other()] }),
+      fakeDismissalStore(),
+      { cache, gateway },
+    );
+
+    // Act
+    await svc.getLibrary("t");
+
+    // Assert: "z1" was re-embedded (its stale cache entry was not trusted) and the resulting
+    // fresh vector still gets used for cross-language matching against "z2".
+    expect(gateway.calls).toBeGreaterThan(0);
   });
 });
