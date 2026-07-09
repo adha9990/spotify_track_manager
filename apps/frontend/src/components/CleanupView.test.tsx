@@ -134,8 +134,8 @@ describe("CleanupView 疑似重複場景", () => {
     const other = pair.remove;
     const { user, dialog } = await openRemovalDialog(chosen);
 
-    expect(dialog.textContent).toMatch(
-      new RegExp("即將移除.*" + escapeRegex(chosen.name)),
+    within(dialog).getByText(
+      new RegExp("即將移除「" + escapeRegex(chosen.name)),
     );
     expect(dialog.textContent).toMatch(
       new RegExp("保留.*" + escapeRegex(other.name)),
@@ -165,8 +165,8 @@ describe("CleanupView 疑似重複場景", () => {
     const other = pair.keep;
     const { user, dialog } = await openRemovalDialog(chosen);
 
-    expect(dialog.textContent).toMatch(
-      new RegExp("即將移除.*" + escapeRegex(chosen.name)),
+    within(dialog).getByText(
+      new RegExp("即將移除「" + escapeRegex(chosen.name)),
     );
     expect(dialog.textContent).toMatch(
       new RegExp("保留.*" + escapeRegex(other.name)),
@@ -221,7 +221,8 @@ describe("CleanupView 疑似重複場景", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    // 取消後焦點回觸發鈕為 Radix FocusScope 隱式還原，jsdom 不忠實重現、改列手動驗證（見 checklist）
+    // 取消後焦點回觸發鈕是 Radix Dialog 的預設 focus-restore（本元件無自訂邏輯），
+    // jsdom 不忠實重現該行為、故不在此斷言；DoD 要求的「成功移除/忽略後焦點回『疑似重複』標題」由 test_S2 鎖住。
   });
 
   it("test_S6_confident群組區塊不受疑似重複改動影響", () => {
