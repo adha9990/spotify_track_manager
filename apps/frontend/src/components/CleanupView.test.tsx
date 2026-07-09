@@ -38,8 +38,16 @@ function makeTrack(overrides: Partial<Track>): Track {
 }
 
 function makePair(): SuspectPair {
-  const keep = makeTrack({ id: "keep-1", name: "曲名A", artists: ["歌手A"] });
-  const remove = makeTrack({ id: "remove-1", name: "曲名B", artists: ["歌手B"] });
+  const keep = makeTrack({
+    id: "keep-1",
+    name: "曲名A",
+    artists: ["歌手A", "客座B"],
+  });
+  const remove = makeTrack({
+    id: "remove-1",
+    name: "曲名B",
+    artists: ["歌手C", "客座D"],
+  });
   return {
     keep,
     remove,
@@ -58,16 +66,22 @@ function makeGroup(): CleanupGroup {
   };
 }
 
-async function openAndConfirmRemoval(track: Track) {
+async function openRemovalDialog(track: Track) {
   const user = userEvent.setup();
   const removeBtn = screen.getByRole("button", {
     name: new RegExp("移除這首.*" + escapeRegex(track.name)),
   });
   await user.click(removeBtn);
   const dialog = await screen.findByRole("dialog", { name: /確認移除/ });
+  return { user, dialog, removeBtn };
+}
+
+async function confirmRemoval(
+  user: ReturnType<typeof userEvent.setup>,
+  dialog: HTMLElement,
+) {
   const confirmBtn = within(dialog).getByRole("button", { name: /確認移除/ });
   await user.click(confirmBtn);
-  return user;
 }
 
 beforeEach(() => {
@@ -85,10 +99,20 @@ describe("CleanupView 疑似重複場景", () => {
     expect(screen.queryByText("疑似多餘")).not.toBeInTheDocument();
 
     const keepBtn = screen.getByRole("button", {
-      name: new RegExp("移除這首.*" + escapeRegex(pair.keep.name)),
+      name: new RegExp(
+        "移除這首.*" +
+          escapeRegex(pair.keep.name) +
+          ".*" +
+          escapeRegex(pair.keep.artists.join(", ")),
+      ),
     });
     const removeBtn = screen.getByRole("button", {
-      name: new RegExp("移除這首.*" + escapeRegex(pair.remove.name)),
+      name: new RegExp(
+        "移除這首.*" +
+          escapeRegex(pair.remove.name) +
+          ".*" +
+          escapeRegex(pair.remove.artists.join(", ")),
+      ),
     });
     expect(keepBtn).toBeInTheDocument();
     expect(removeBtn).toBeInTheDocument();
@@ -96,6 +120,8 @@ describe("CleanupView 疑似重複場景", () => {
     expect(
       screen.getByRole("button", { name: /^不是重複/ }),
     ).toBeInTheDocument();
+
+    expect(screen.getByText(pair.hints[0]!)).toBeInTheDocument();
   });
 
   it("test_S2_移除原keep那首會呼叫刪除且焦點回標題", async () => {
@@ -104,22 +130,60 @@ describe("CleanupView 疑似重複場景", () => {
 
     const heading = screen.getByRole("heading", { name: /疑似重複/ });
 
-    await openAndConfirmRemoval(pair.keep);
+    const chosen = pair.keep;
+    const other = pair.remove;
+    const { user, dialog } = await openRemovalDialog(chosen);
+
+    expect(dialog.textContent).toMatch(
+      new RegExp("即將移除.*" + escapeRegex(chosen.name)),
+    );
+    expect(dialog.textContent).toMatch(
+      new RegExp("保留.*" + escapeRegex(other.name)),
+    );
+    expect(dialog.textContent).toMatch(/「歷史」中復原/);
+
+    await confirmRemoval(user, dialog);
 
     expect(H.del).toHaveBeenCalledTimes(1);
     expect(H.del.mock.calls[0]![0]).toEqual([pair.keep.id]);
 
     await waitFor(() => expect(document.activeElement).toBe(heading));
+
+    await waitFor(() => {
+      const live = document.querySelector('[aria-live="polite"]');
+      expect(live?.textContent ?? "").toMatch(
+        new RegExp("已移除.*" + escapeRegex(chosen.name)),
+      );
+    });
   });
 
   it("test_S3_移除原remove那首會呼叫刪除", async () => {
     const pair = makePair();
     render(<CleanupView groups={[]} suspects={[pair]} />);
 
-    await openAndConfirmRemoval(pair.remove);
+    const chosen = pair.remove;
+    const other = pair.keep;
+    const { user, dialog } = await openRemovalDialog(chosen);
+
+    expect(dialog.textContent).toMatch(
+      new RegExp("即將移除.*" + escapeRegex(chosen.name)),
+    );
+    expect(dialog.textContent).toMatch(
+      new RegExp("保留.*" + escapeRegex(other.name)),
+    );
+    expect(dialog.textContent).toMatch(/「歷史」中復原/);
+
+    await confirmRemoval(user, dialog);
 
     expect(H.del).toHaveBeenCalledTimes(1);
     expect(H.del.mock.calls[0]![0]).toEqual([pair.remove.id]);
+
+    await waitFor(() => {
+      const live = document.querySelector('[aria-live="polite"]');
+      expect(live?.textContent ?? "").toMatch(
+        new RegExp("已移除.*" + escapeRegex(chosen.name)),
+      );
+    });
   });
 
   it("test_S4_不是重複會觸發dismiss並播報", async () => {
@@ -153,6 +217,11 @@ describe("CleanupView 疑似重複場景", () => {
     await user.click(cancelBtn);
 
     expect(H.del).not.toHaveBeenCalled();
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    // 取消後焦點回觸發鈕為 Radix FocusScope 隱式還原，jsdom 不忠實重現、改列手動驗證（見 checklist）
   });
 
   it("test_S6_confident群組區塊不受疑似重複改動影響", () => {

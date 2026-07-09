@@ -86,7 +86,7 @@ function SuspectCard({
   const del = useDeleteTracks();
   const dismiss = useDismissSuspect();
   const headingId = `suspect-${domId(pair.pairKey)}-heading`;
-  const other = chosen?.id === pair.keep.id ? pair.remove : pair.keep;
+  const other: Track | null = chosen ? (chosen.id === pair.keep.id ? pair.remove : pair.keep) : null;
   // Distinguishes why the confirm dialog is closing: a successful removal unmounts this
   // whole card (its trigger button included), so Radix's default onCloseAutoFocus — which
   // returns focus to that trigger — would find nothing and drop focus to <body>. Only
@@ -98,6 +98,18 @@ function SuspectCard({
   // there gets yanked straight back into the (about to unmount) dialog content. onCloseAutoFocus
   // fires after the trap's listener has already been torn down, so the focus move sticks.
   const closedByRemovalRef = useRef(false);
+
+  const removeAction = (track: Track) => (
+    <Button
+      size="sm"
+      variant="danger"
+      disabled={del.isPending}
+      aria-label={`移除這首：${track.name} — ${track.artists.join(", ")}`}
+      onClick={() => setChosen(track)}
+    >
+      移除這首
+    </Button>
+  );
 
   return (
     <div role="group" aria-labelledby={headingId} className="rounded-lg border border-stone-200 bg-white/60">
@@ -121,34 +133,14 @@ function SuspectCard({
         track={pair.keep}
         tag={null}
         onPlay={onPlay}
-        action={
-          <Button
-            size="sm"
-            variant="danger"
-            disabled={del.isPending}
-            aria-label={`移除這首：${pair.keep.name} — ${pair.keep.artists.join(", ")}`}
-            onClick={() => setChosen(pair.keep)}
-          >
-            移除這首
-          </Button>
-        }
+        action={removeAction(pair.keep)}
       />
       <div className="border-t border-stone-100">
         <TrackRow
           track={pair.remove}
           tag={null}
           onPlay={onPlay}
-          action={
-            <Button
-              size="sm"
-              variant="danger"
-              disabled={del.isPending}
-              aria-label={`移除這首：${pair.remove.name} — ${pair.remove.artists.join(", ")}`}
-              onClick={() => setChosen(pair.remove)}
-            >
-              移除這首
-            </Button>
-          }
+          action={removeAction(pair.remove)}
         />
       </div>
       <div className="flex justify-end gap-2 border-t border-stone-100 px-3 py-2">
@@ -177,7 +169,7 @@ function SuspectCard({
         }}
         title="確認移除"
         description={
-          chosen
+          chosen && other
             ? `即將移除「${chosen.name} — ${chosen.artists.join(", ")}」,保留「${other.name} — ${other.artists.join(", ")}」。此動作可在「歷史」中復原。`
             : ""
         }
