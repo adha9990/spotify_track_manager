@@ -87,4 +87,35 @@ describe("diffParts", () => {
     expect(result.bMiddle).toBe("abc");
     expectRebuild(a, b, result);
   });
+
+  it("純空白差異時，重建結果仍須吻合原字串", () => {
+    const a = "勇氣 ";
+    const b = "勇氣";
+
+    const result = diffParts(a, b);
+
+    expectRebuild(a, b, result);
+  });
+
+  it("雙空字串時，所有片段皆為空字串", () => {
+    const a = "";
+    const b = "";
+
+    const result = diffParts(a, b);
+
+    expect(result.commonPrefix).toBe("");
+    expect(result.commonSuffix).toBe("");
+    expect(result.aMiddle).toBe("");
+    expect(result.bMiddle).toBe("");
+    expectRebuild(a, b, result);
+  });
+
+  it("中段重疊子字串時，重建結果仍須吻合原字串（不可誤判重疊為前後綴）", () => {
+    const a = "abab";
+    const b = "baba";
+
+    const result = diffParts(a, b);
+
+    expectRebuild(a, b, result);
+  });
 });
