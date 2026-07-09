@@ -36,7 +36,7 @@ function highlightTitle(self: string, other: string): ReactNode {
     return (
       <>
         {commonPrefix}
-        <strong className="font-bold text-accent">{aMiddle}</strong>
+        <strong className="font-bold text-accent underline">{aMiddle}</strong>
         {commonSuffix}
       </>
     );
@@ -126,13 +126,19 @@ function SuspectCard({
   // fires after the trap's listener has already been torn down, so the focus move sticks.
   const closedByRemovalRef = useRef(false);
 
+  const keepHighlighted = highlightTitle(pair.keep.name, pair.remove.name);
+  const removeHighlighted = highlightTitle(pair.remove.name, pair.keep.name);
+
   const removeAction = (track: Track) => (
     <Button
       size="sm"
       variant="danger"
       disabled={del.isPending}
       aria-label={`移除這首：${track.name} — ${track.artists.join(", ")}`}
-      onClick={() => setChosen(track)}
+      onClick={() => {
+        setChosen(track);
+        setDismissError(null);
+      }}
     >
       移除這首
     </Button>
@@ -142,9 +148,9 @@ function SuspectCard({
     <div role="group" aria-labelledby={headingId} className="rounded-lg border border-stone-200 bg-white/60">
       <div className="border-b border-stone-200/70 px-3 py-2">
         <h3 id={headingId} className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-          <span className="break-words">{highlightTitle(pair.keep.name, pair.remove.name)}</span>
+          <span className="min-w-0 break-words">{keepHighlighted}</span>
           <Icon name="swap" className="h-3.5 w-3.5 shrink-0 text-stone-400" />
-          <span className="break-words">{highlightTitle(pair.remove.name, pair.keep.name)}</span>
+          <span className="min-w-0 break-words">{removeHighlighted}</span>
         </h3>
         {pair.hints.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
@@ -163,7 +169,7 @@ function SuspectCard({
         action={removeAction(pair.keep)}
         nameNode={
           <span className="font-medium break-words">
-            {highlightTitle(pair.keep.name, pair.remove.name)}
+            {keepHighlighted}
           </span>
         }
       />
@@ -175,13 +181,17 @@ function SuspectCard({
           action={removeAction(pair.remove)}
           nameNode={
             <span className="font-medium break-words">
-              {highlightTitle(pair.remove.name, pair.keep.name)}
+              {removeHighlighted}
             </span>
           }
         />
       </div>
       <div className="border-t border-stone-100 px-3 py-2">
-        {dismissError && <p className="mb-1.5 text-xs text-red-700">{dismissError}</p>}
+        {dismissError && (
+          <p role="alert" className="mb-1.5 text-xs text-red-700">
+            {dismissError}
+          </p>
+        )}
         <div className="flex justify-end gap-2">
           <Button
             size="sm"
@@ -197,7 +207,6 @@ function SuspectCard({
                 },
                 onError: () => {
                   setDismissError("標記失敗，請稍後再試");
-                  onResolved("標記失敗，請稍後再試");
                 },
               });
             }}
@@ -230,7 +239,11 @@ function SuspectCard({
         }}
       >
         <div className="flex flex-col gap-3">
-          {removeError && <p className="text-xs text-red-700">{removeError}</p>}
+          {removeError && (
+            <p role="alert" className="text-xs text-red-700">
+              {removeError}
+            </p>
+          )}
           <div className="flex justify-end gap-2">
             <Button
               variant="ghost"
@@ -256,7 +269,6 @@ function SuspectCard({
                   },
                   onError: () => {
                     setRemoveError("移除失敗，請稍後再試");
-                    onResolved("移除失敗，請稍後再試");
                   },
                 });
               }}
@@ -313,7 +325,6 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
       onSuccess: () => setConfirming(false),
       onError: () => {
         setCleanupError("一鍵清理失敗，請稍後再試");
-        setLiveMessage("一鍵清理失敗，請稍後再試");
       },
     });
   };
@@ -440,7 +451,11 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
         description={`即將從收藏移除 ${included.length} 組共 ${removalIds.length} 首歌曲。每首都已保留同組的另一個版本,此動作可在「歷史」中復原。`}
       >
         <div className="flex flex-col gap-3">
-          {cleanupError && <p className="text-xs text-red-700">{cleanupError}</p>}
+          {cleanupError && (
+            <p role="alert" className="text-xs text-red-700">
+              {cleanupError}
+            </p>
+          )}
           <div className="flex justify-end gap-2">
             <Button
               variant="ghost"

@@ -29,7 +29,7 @@ export function diffParts(
   }
 
   const commonPrefix = a.slice(0, prefixLen);
-  const commonSuffix = suffixLen === 0 ? "" : a.slice(a.length - suffixLen);
+  const commonSuffix = a.slice(a.length - suffixLen);
   const aMiddle = a.slice(prefixLen, a.length - suffixLen);
   const bMiddle = b.slice(prefixLen, b.length - suffixLen);
 
