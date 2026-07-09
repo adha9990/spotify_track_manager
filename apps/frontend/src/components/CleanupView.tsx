@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useRef, useState } from "react";
 import { useDeleteTracks, useDismissSuspect, usePlayTrack } from "../hooks/useLibrary";
 import { formatDate, formatDuration } from "../lib/format";
+import { diffParts } from "../lib/titleDiff";
 import { useUi } from "../store/ui";
 import { Badge, Button, cx, Icon } from "./primitives";
 import { Dialog } from "./Dialog";
@@ -22,17 +23,41 @@ const shortReason = (reason: string) => (reason.includes("失效") ? "失效" : 
 /** Sanitize an arbitrary pairKey (e.g. "t20|t25") into a valid DOM id fragment. */
 const domId = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "-");
 
+/**
+ * Renders `self`'s title with the segment that differs from `other` bolded, so a
+ * suspected-duplicate pair's distinguishing part (e.g. " (Live版)") stands out. When
+ * the two titles share nothing (cross-language pairs) or don't differ, returns plain
+ * text with no <strong> — a graceful, un-emphasized fallback. Never truncated: the
+ * full title is always shown so users can compare the whole name.
+ */
+function highlightTitle(self: string, other: string): ReactNode {
+  const { commonPrefix, commonSuffix, aMiddle } = diffParts(self, other);
+  if (commonPrefix.length + commonSuffix.length > 0 && aMiddle.length > 0) {
+    return (
+      <>
+        {commonPrefix}
+        <strong className="font-bold text-accent">{aMiddle}</strong>
+        {commonSuffix}
+      </>
+    );
+  }
+  return self;
+}
+
 function TrackRow({
   track,
   tag,
   onPlay,
   action,
+  nameNode,
 }: {
   track: Track;
   tag: ReactNode;
   onPlay: (id: string) => void;
   /** Optional trailing control rendered outside the fixed grid (e.g. a per-row remove button). */
   action?: ReactNode;
+  /** Overrides the default truncated title span (e.g. a highlighted, wrapping title). */
+  nameNode?: ReactNode;
 }) {
   return (
     <div className="flex items-center gap-3 px-3 py-2">
@@ -50,7 +75,7 @@ function TrackRow({
         <div>{tag}</div>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="truncate font-medium">{track.name}</span>
+            {nameNode ?? <span className="truncate font-medium">{track.name}</span>}
             {!track.isPlayable && <Badge tone="warn">失效</Badge>}
           </div>
           <div className="truncate text-xs text-stone-500">{track.artists.join(", ")}</div>
@@ -83,6 +108,8 @@ function SuspectCard({
   onFocusSuspectsHeading: () => void;
 }) {
   const [chosen, setChosen] = useState<Track | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [dismissError, setDismissError] = useState<string | null>(null);
   const del = useDeleteTracks();
   const dismiss = useDismissSuspect();
   const headingId = `suspect-${domId(pair.pairKey)}-heading`;
@@ -115,9 +142,9 @@ function SuspectCard({
     <div role="group" aria-labelledby={headingId} className="rounded-lg border border-stone-200 bg-white/60">
       <div className="border-b border-stone-200/70 px-3 py-2">
         <h3 id={headingId} className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-          <span className="truncate">{pair.keep.name}</span>
+          <span className="break-words">{highlightTitle(pair.keep.name, pair.remove.name)}</span>
           <Icon name="swap" className="h-3.5 w-3.5 shrink-0 text-stone-400" />
-          <span className="truncate">{pair.remove.name}</span>
+          <span className="break-words">{highlightTitle(pair.remove.name, pair.keep.name)}</span>
         </h3>
         {pair.hints.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
@@ -134,6 +161,11 @@ function SuspectCard({
         tag={null}
         onPlay={onPlay}
         action={removeAction(pair.keep)}
+        nameNode={
+          <span className="font-medium break-words">
+            {highlightTitle(pair.keep.name, pair.remove.name)}
+          </span>
+        }
       />
       <div className="border-t border-stone-100">
         <TrackRow
@@ -141,31 +173,47 @@ function SuspectCard({
           tag={null}
           onPlay={onPlay}
           action={removeAction(pair.remove)}
+          nameNode={
+            <span className="font-medium break-words">
+              {highlightTitle(pair.remove.name, pair.keep.name)}
+            </span>
+          }
         />
       </div>
-      <div className="flex justify-end gap-2 border-t border-stone-100 px-3 py-2">
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={dismiss.isPending}
-          aria-label={`不是重複：${pair.keep.name} — ${pair.keep.artists[0]}／${pair.remove.name} — ${pair.remove.artists[0]}`}
-          onClick={() =>
-            dismiss.mutate(pair.pairKey, {
-              onSuccess: () => {
-                onResolved(`已標記「${pair.remove.name}」為不是重複`);
-                onFocusSuspectsHeading();
-              },
-            })
-          }
-        >
-          不是重複
-        </Button>
+      <div className="border-t border-stone-100 px-3 py-2">
+        {dismissError && <p className="mb-1.5 text-xs text-red-700">{dismissError}</p>}
+        <div className="flex justify-end gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={dismiss.isPending}
+            aria-label={`不是重複：${pair.keep.name} — ${pair.keep.artists[0]}／${pair.remove.name} — ${pair.remove.artists[0]}`}
+            onClick={() => {
+              setDismissError(null);
+              dismiss.mutate(pair.pairKey, {
+                onSuccess: () => {
+                  onResolved(`已標記「${pair.remove.name}」為不是重複`);
+                  onFocusSuspectsHeading();
+                },
+                onError: () => {
+                  setDismissError("標記失敗，請稍後再試");
+                  onResolved("標記失敗，請稍後再試");
+                },
+              });
+            }}
+          >
+            不是重複
+          </Button>
+        </div>
       </div>
 
       <Dialog
         open={chosen !== null}
         onOpenChange={(open) => {
-          if (!open) setChosen(null);
+          if (!open) {
+            setChosen(null);
+            setRemoveError(null);
+          }
         }}
         title="確認移除"
         description={
@@ -181,27 +229,41 @@ function SuspectCard({
           closedByRemovalRef.current = false;
         }}
       >
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setChosen(null)}>
-            取消
-          </Button>
-          <Button
-            variant="primary"
-            disabled={del.isPending || chosen === null}
-            onClick={() => {
-              if (!chosen) return;
-              const removedName = chosen.name;
-              del.mutate([chosen.id], {
-                onSuccess: () => {
-                  closedByRemovalRef.current = true;
-                  setChosen(null);
-                  onResolved(`已移除「${removedName}」,可在歷史中復原`);
-                },
-              });
-            }}
-          >
-            {del.isPending ? "移除中…" : "確認移除"}
-          </Button>
+        <div className="flex flex-col gap-3">
+          {removeError && <p className="text-xs text-red-700">{removeError}</p>}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setChosen(null);
+                setRemoveError(null);
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              disabled={del.isPending || chosen === null}
+              onClick={() => {
+                if (!chosen) return;
+                const removedName = chosen.name;
+                setRemoveError(null);
+                del.mutate([chosen.id], {
+                  onSuccess: () => {
+                    closedByRemovalRef.current = true;
+                    setChosen(null);
+                    onResolved(`已移除「${removedName}」,可在歷史中復原`);
+                  },
+                  onError: () => {
+                    setRemoveError("移除失敗，請稍後再試");
+                    onResolved("移除失敗，請稍後再試");
+                  },
+                });
+              }}
+            >
+              {del.isPending ? "移除中…" : "確認移除"}
+            </Button>
+          </div>
         </div>
       </Dialog>
     </div>
@@ -213,6 +275,7 @@ const SUSPECTS_HEADING_ID = "cleanup-suspects-heading";
 
 export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; suspects: SuspectPair[] }) {
   const [confirming, setConfirming] = useState(false);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
   const del = useDeleteTracks();
   const play = usePlayTrack();
   const excluded = useUi((s) => s.cleanupExcluded);
@@ -244,8 +307,16 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
   const included = groups.filter((g) => !excluded.has(g.keep.id));
   const removalIds = included.flatMap((g) => g.removals.map((r) => r.track.id));
 
-  const runCleanup = () =>
-    del.mutate(removalIds, { onSuccess: () => setConfirming(false) });
+  const runCleanup = () => {
+    setCleanupError(null);
+    del.mutate(removalIds, {
+      onSuccess: () => setConfirming(false),
+      onError: () => {
+        setCleanupError("一鍵清理失敗，請稍後再試");
+        setLiveMessage("一鍵清理失敗，請稍後再試");
+      },
+    });
+  };
 
   const onPlay = (id: string) => play.mutate(id);
 
@@ -361,17 +432,29 @@ export function CleanupView({ groups, suspects }: { groups: CleanupGroup[]; susp
 
       <Dialog
         open={confirming}
-        onOpenChange={setConfirming}
+        onOpenChange={(open) => {
+          setConfirming(open);
+          if (!open) setCleanupError(null);
+        }}
         title="確認清理"
         description={`即將從收藏移除 ${included.length} 組共 ${removalIds.length} 首歌曲。每首都已保留同組的另一個版本,此動作可在「歷史」中復原。`}
       >
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setConfirming(false)}>
-            取消
-          </Button>
-          <Button variant="primary" disabled={del.isPending} onClick={runCleanup}>
-            {del.isPending ? "清理中…" : `確認移除 ${removalIds.length} 首`}
-          </Button>
+        <div className="flex flex-col gap-3">
+          {cleanupError && <p className="text-xs text-red-700">{cleanupError}</p>}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setConfirming(false);
+                setCleanupError(null);
+              }}
+            >
+              取消
+            </Button>
+            <Button variant="primary" disabled={del.isPending} onClick={runCleanup}>
+              {del.isPending ? "清理中…" : `確認移除 ${removalIds.length} 首`}
+            </Button>
+          </div>
         </div>
       </Dialog>
     </div>
