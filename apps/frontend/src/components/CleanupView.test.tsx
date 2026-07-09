@@ -398,10 +398,13 @@ describe("CleanupView 失敗回饋（mutation onError 不誤報成功）", () =>
 
     expect(within(dialog).getByRole("alert")).toHaveTextContent(/失敗/);
 
-    // 第二次點擊走預設成功 mock（未再被 mockImplementationOnce 蓋過）
+    // 第二次點擊刻意讓 mutate 尚未回應（不觸發 onSuccess/onError），
+    // 藉此與「Dialog 因成功而 unmount」解耦：舊錯誤必須在重新送出當下就被清掉。
+    H.del.mockImplementationOnce(() => {});
     await confirmRemoval(user, dialog);
 
     expect(H.del).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
   });
 });
