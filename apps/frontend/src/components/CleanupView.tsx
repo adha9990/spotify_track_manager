@@ -138,6 +138,7 @@ function SuspectCard({
       onClick={() => {
         setChosen(track);
         setDismissError(null);
+        setRemoveError(null);
       }}
     >
       移除這首
