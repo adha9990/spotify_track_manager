@@ -38,6 +38,10 @@ pnpm-debug.log*
 # Test / tooling artifacts
 .playwright-mcp/
 
+# Dev-workflow loop state / worktrees (local only, never commit)
+.loops/
+.claude/worktrees/
+
 # Python leftovers (pre-rewrite)
 __pycache__/
 *.pyc

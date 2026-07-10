@@ -26,35 +26,41 @@ function TrackRow({
   track,
   tag,
   onPlay,
+  action,
 }: {
   track: Track;
   tag: ReactNode;
   onPlay: (id: string) => void;
+  /** Optional trailing control rendered outside the fixed grid (e.g. a per-row remove button). */
+  action?: ReactNode;
 }) {
   return (
-    <div
-      className="grid items-center gap-3 px-3 py-2 text-sm"
-      style={{ gridTemplateColumns: ROW_GRID }}
-    >
-      <button
-        onClick={() => onPlay(track.id)}
-        title="試聽"
-        className="flex h-7 w-7 scroll-mt-24 items-center justify-center rounded-full text-stone-500 hover:bg-accent hover:text-white"
+    <div className="flex items-center gap-3 px-3 py-2">
+      <div
+        className="grid flex-1 items-center gap-3 text-sm"
+        style={{ gridTemplateColumns: ROW_GRID }}
       >
-        <Icon name="play" className="h-3.5 w-3.5" />
-      </button>
-      <div>{tag}</div>
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="truncate font-medium">{track.name}</span>
-          {!track.isPlayable && <Badge tone="warn">失效</Badge>}
+        <button
+          onClick={() => onPlay(track.id)}
+          title="試聽"
+          className="flex h-7 w-7 scroll-mt-24 items-center justify-center rounded-full text-stone-500 hover:bg-accent hover:text-white"
+        >
+          <Icon name="play" className="h-3.5 w-3.5" />
+        </button>
+        <div>{tag}</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="truncate font-medium">{track.name}</span>
+            {!track.isPlayable && <Badge tone="warn">失效</Badge>}
+          </div>
+          <div className="truncate text-xs text-stone-500">{track.artists.join(", ")}</div>
         </div>
-        <div className="truncate text-xs text-stone-500">{track.artists.join(", ")}</div>
+        <div className="truncate text-stone-500">{track.album}</div>
+        <div className="nums text-right text-stone-500">{track.popularity}</div>
+        <div className="nums text-right text-stone-500">{formatDate(track.addedAt)}</div>
+        <div className="nums text-right text-stone-500">{formatDuration(track.durationMs)}</div>
       </div>
-      <div className="truncate text-stone-500">{track.album}</div>
-      <div className="nums text-right text-stone-500">{track.popularity}</div>
-      <div className="nums text-right text-stone-500">{formatDate(track.addedAt)}</div>
-      <div className="nums text-right text-stone-500">{formatDuration(track.durationMs)}</div>
+      {action}
     </div>
   );
 }
@@ -76,10 +82,11 @@ function SuspectCard({
    */
   onFocusSuspectsHeading: () => void;
 }) {
-  const [confirming, setConfirming] = useState(false);
+  const [chosen, setChosen] = useState<Track | null>(null);
   const del = useDeleteTracks();
   const dismiss = useDismissSuspect();
   const headingId = `suspect-${domId(pair.pairKey)}-heading`;
+  const other: Track | null = chosen ? (chosen.id === pair.keep.id ? pair.remove : pair.keep) : null;
   // Distinguishes why the confirm dialog is closing: a successful removal unmounts this
   // whole card (its trigger button included), so Radix's default onCloseAutoFocus — which
   // returns focus to that trigger — would find nothing and drop focus to <body>. Only
@@ -92,13 +99,25 @@ function SuspectCard({
   // fires after the trap's listener has already been torn down, so the focus move sticks.
   const closedByRemovalRef = useRef(false);
 
+  const removeAction = (track: Track) => (
+    <Button
+      size="sm"
+      variant="danger"
+      disabled={del.isPending}
+      aria-label={`移除這首：${track.name} — ${track.artists.join(", ")}`}
+      onClick={() => setChosen(track)}
+    >
+      移除這首
+    </Button>
+  );
+
   return (
     <div role="group" aria-labelledby={headingId} className="rounded-lg border border-stone-200 bg-white/60">
       <div className="border-b border-stone-200/70 px-3 py-2">
         <h3 id={headingId} className="flex flex-wrap items-center gap-2 text-sm font-semibold">
           <span className="truncate">{pair.keep.name}</span>
           <Icon name="swap" className="h-3.5 w-3.5 shrink-0 text-stone-400" />
-          <span className="truncate text-stone-500">{pair.remove.name}</span>
+          <span className="truncate">{pair.remove.name}</span>
         </h3>
         {pair.hints.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
@@ -110,9 +129,19 @@ function SuspectCard({
           </div>
         )}
       </div>
-      <TrackRow track={pair.keep} tag={<Badge tone="ok">建議保留</Badge>} onPlay={onPlay} />
+      <TrackRow
+        track={pair.keep}
+        tag={null}
+        onPlay={onPlay}
+        action={removeAction(pair.keep)}
+      />
       <div className="border-t border-stone-100">
-        <TrackRow track={pair.remove} tag={<Badge tone="warn">疑似多餘</Badge>} onPlay={onPlay} />
+        <TrackRow
+          track={pair.remove}
+          tag={null}
+          onPlay={onPlay}
+          action={removeAction(pair.remove)}
+        />
       </div>
       <div className="flex justify-end gap-2 border-t border-stone-100 px-3 py-2">
         <Button
@@ -131,22 +160,19 @@ function SuspectCard({
         >
           不是重複
         </Button>
-        <Button
-          size="sm"
-          variant="danger"
-          disabled={del.isPending}
-          aria-label={`確認移除：${pair.remove.name} — ${pair.remove.artists[0]}`}
-          onClick={() => setConfirming(true)}
-        >
-          確認移除
-        </Button>
       </div>
 
       <Dialog
-        open={confirming}
-        onOpenChange={setConfirming}
+        open={chosen !== null}
+        onOpenChange={(open) => {
+          if (!open) setChosen(null);
+        }}
         title="確認移除"
-        description={`即將從收藏移除「${pair.remove.name} — ${pair.remove.artists.join(", ")}」,保留「${pair.keep.name} — ${pair.keep.artists.join(", ")}」。此動作可在「歷史」中復原。`}
+        description={
+          chosen && other
+            ? `即將移除「${chosen.name} — ${chosen.artists.join(", ")}」,保留「${other.name} — ${other.artists.join(", ")}」。此動作可在「歷史」中復原。`
+            : ""
+        }
         onCloseAutoFocus={(e) => {
           if (closedByRemovalRef.current) {
             e.preventDefault();
@@ -156,21 +182,23 @@ function SuspectCard({
         }}
       >
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setConfirming(false)}>
+          <Button variant="ghost" onClick={() => setChosen(null)}>
             取消
           </Button>
           <Button
             variant="primary"
-            disabled={del.isPending}
-            onClick={() =>
-              del.mutate([pair.remove.id], {
+            disabled={del.isPending || chosen === null}
+            onClick={() => {
+              if (!chosen) return;
+              const removedName = chosen.name;
+              del.mutate([chosen.id], {
                 onSuccess: () => {
                   closedByRemovalRef.current = true;
-                  setConfirming(false);
-                  onResolved(`已移除「${pair.remove.name}」,可在歷史中復原`);
+                  setChosen(null);
+                  onResolved(`已移除「${removedName}」,可在歷史中復原`);
                 },
-              })
-            }
+              });
+            }}
           >
             {del.isPending ? "移除中…" : "確認移除"}
           </Button>
