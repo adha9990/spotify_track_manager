@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Track, SuspectPair, CleanupGroup } from "@stm/shared";
 import { CleanupView } from "./CleanupView";
+import { diffParts } from "../lib/titleDiff";
 
 const H = vi.hoisted(() => ({
   del: vi.fn((_ids: string[], opts?: any) => opts?.onSuccess?.()),
@@ -52,6 +53,26 @@ function makePair(): SuspectPair {
     keep,
     remove,
     pairKey: "keep-1|remove-1",
+    score: 0.9,
+    hints: ["版本後綴"],
+  };
+}
+
+function makeTitledPair(keepName: string, removeName: string): SuspectPair {
+  const keep = makeTrack({
+    id: "keep-titled-1",
+    name: keepName,
+    artists: ["同曲歌手"],
+  });
+  const remove = makeTrack({
+    id: "remove-titled-1",
+    name: removeName,
+    artists: ["同曲歌手"],
+  });
+  return {
+    keep,
+    remove,
+    pairKey: "keep-titled-1|remove-titled-1",
     score: 0.9,
     hints: ["版本後綴"],
   };
@@ -239,5 +260,151 @@ describe("CleanupView 疑似重複場景", () => {
     expect(
       screen.getByRole("button", { name: /一鍵清理/ }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("CleanupView 疑似對辨識度（相異段加粗、不截斷）", () => {
+  it("test_highlight_相異段加粗且不截斷（S1）", () => {
+    const pair = makeTitledPair("勇氣", "勇氣 (Live版)");
+    const { container } = render(<CleanupView groups={[]} suspects={[pair]} />);
+
+    // 完整曲名文字都要在（不截斷），用容器 textContent 比對，因文字可能被 <strong> 拆節點
+    expect(container.textContent ?? "").toContain(pair.keep.name);
+    expect(container.textContent ?? "").toContain(pair.remove.name);
+
+    const { aMiddle, bMiddle } = diffParts(pair.keep.name, pair.remove.name);
+    expect(aMiddle).toBe(""); // keep 相對 remove 無多出差異段
+    const expectedMiddle = bMiddle.trim();
+    expect(expectedMiddle.length).toBeGreaterThan(0);
+
+    // 找出「文字內容恰好等於整個曲名」的最內層節點（不依賴實作標籤/class，只依賴渲染出的文字結構）
+    function findTitleEl(name: string): HTMLElement | null {
+      const candidates = Array.from(
+        container.querySelectorAll<HTMLElement>("*"),
+      ).filter((el) => (el.textContent ?? "").trim() === name);
+      candidates.sort(
+        (a, b) =>
+          a.querySelectorAll("*").length - b.querySelectorAll("*").length,
+      );
+      return candidates[0] ?? null;
+    }
+
+    const keepTitleEl = findTitleEl(pair.keep.name);
+    const removeTitleEl = findTitleEl(pair.remove.name);
+    expect(keepTitleEl).not.toBeNull();
+    expect(removeTitleEl).not.toBeNull();
+
+    // keep 那列（無多出差異段）不應有任何加粗
+    expect(keepTitleEl!.querySelectorAll("strong").length).toBe(0);
+
+    // remove 那列的加粗文字須恰好等於相異中段（非只是「有包含」）
+    const removeStrongs = Array.from(
+      removeTitleEl!.querySelectorAll("strong"),
+    );
+    expect(removeStrongs.length).toBeGreaterThan(0);
+    expect(
+      removeStrongs.map((el) => (el.textContent ?? "").trim()).join(""),
+    ).toBe(expectedMiddle);
+
+    // 相同前綴「勇氣」不可被誤包進任何 <strong>
+    const allStrongText = Array.from(container.querySelectorAll("strong"))
+      .map((el) => el.textContent ?? "")
+      .join("");
+    expect(allStrongText).not.toContain(pair.keep.name);
+  });
+
+  it("test_highlight_跨語言零重疊不加粗（S2）", () => {
+    const pair = makeTitledPair("告白氣球", "Bubble Love");
+    const { commonPrefix, commonSuffix } = diffParts(pair.keep.name, pair.remove.name);
+    expect(commonPrefix).toBe("");
+    expect(commonSuffix).toBe("");
+
+    const { container } = render(<CleanupView groups={[]} suspects={[pair]} />);
+
+    expect(container.textContent ?? "").toContain(pair.keep.name);
+    expect(container.textContent ?? "").toContain(pair.remove.name);
+    expect(container.querySelectorAll("strong").length).toBe(0);
+  });
+});
+
+describe("CleanupView 失敗回饋（mutation onError 不誤報成功）", () => {
+  it("test_onError_移除失敗顯錯不誤報（S3）", async () => {
+    const pair = makePair();
+    H.del.mockImplementationOnce((_ids: string[], opts?: any) =>
+      opts?.onError?.(new Error("boom")),
+    );
+    render(<CleanupView groups={[]} suspects={[pair]} />);
+
+    const { user, dialog } = await openRemovalDialog(pair.keep);
+    await confirmRemoval(user, dialog);
+
+    expect(H.del).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/失敗/);
+
+    await waitFor(() => {
+      const live = document.querySelector('[aria-live="polite"]');
+      expect(live?.textContent ?? "").not.toMatch(/已移除/);
+    });
+  });
+
+  it("test_onError_dismiss失敗顯錯（S4）", async () => {
+    const pair = makePair();
+    H.dismiss.mockImplementationOnce((_key: string, opts?: any) =>
+      opts?.onError?.(new Error("boom")),
+    );
+    render(<CleanupView groups={[]} suspects={[pair]} />);
+    const user = userEvent.setup();
+
+    const dismissBtn = screen.getByRole("button", { name: /^不是重複/ });
+    await user.click(dismissBtn);
+
+    expect(H.dismiss).toHaveBeenCalledTimes(1);
+    const card = dismissBtn.closest('[role="group"]') as HTMLElement | null;
+    expect(card).not.toBeNull();
+    expect(within(card!).getByRole("alert")).toHaveTextContent(/失敗/);
+    expect(screen.queryByText(/已標記.*不是重複/)).not.toBeInTheDocument();
+  });
+
+  it("test_onError_一鍵清理失敗顯錯不誤關（S5）", async () => {
+    const group = makeGroup();
+    render(<CleanupView groups={[group]} suspects={[]} />);
+    const user = userEvent.setup();
+
+    const cleanupBtn = screen.getByRole("button", { name: /一鍵清理/ });
+    await user.click(cleanupBtn);
+    const dialog = await screen.findByRole("dialog", { name: /確認清理/ });
+
+    H.del.mockImplementationOnce((_ids: string[], opts?: any) =>
+      opts?.onError?.(new Error("boom")),
+    );
+    const confirmBtn = within(dialog).getByRole("button", { name: /確認移除/ });
+    await user.click(confirmBtn);
+
+    expect(H.del).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/失敗/);
+  });
+
+  it("test_onError_移除重試後清除錯誤（F4）", async () => {
+    const pair = makePair();
+    H.del.mockImplementationOnce((_ids: string[], opts?: any) =>
+      opts?.onError?.(new Error("boom")),
+    );
+    render(<CleanupView groups={[]} suspects={[pair]} />);
+
+    const { user, dialog } = await openRemovalDialog(pair.remove);
+    await confirmRemoval(user, dialog);
+
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/失敗/);
+
+    // 第二次點擊刻意讓 mutate 尚未回應（不觸發 onSuccess/onError），
+    // 藉此與「Dialog 因成功而 unmount」解耦：舊錯誤必須在重新送出當下就被清掉。
+    H.del.mockImplementationOnce(() => {});
+    await confirmRemoval(user, dialog);
+
+    expect(H.del).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
   });
 });
