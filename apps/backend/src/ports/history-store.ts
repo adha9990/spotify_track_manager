@@ -1,4 +1,4 @@
-import type { HistoryBatch } from "@stm/shared";
+import type { HistoryBatch, HistoryTrack } from "@stm/shared";
 
 // The undo op-log seam. The HTTP layer records mutations and reverses batches
 // through this interface; the concrete sqlite implementation lives in adapters/db.
@@ -10,9 +10,10 @@ export interface UndoReversal {
 
 export interface HistoryStore {
   /** Record a completed mutation. `batchId`/`ts` are supplied by the caller. */
-  record(action: "add" | "delete", trackIds: string[], batchId: string, ts: string): void;
+  record(action: "add" | "delete", trackIds: string[], batchId: string, ts: string, tracks?: HistoryTrack[]): void;
   /** All batches, newest first. */
   list(): HistoryBatch[];
+  rememberTracks(tracks: HistoryTrack[]): void;
   /** Mark a batch undone and return what to reverse; null if unknown or already undone. */
   beginUndo(batchId: string): UndoReversal | null;
   /** Revert the undone flag — used to roll back if the Spotify reversal fails. */

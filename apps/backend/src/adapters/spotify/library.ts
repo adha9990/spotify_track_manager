@@ -1,49 +1,63 @@
-import type { SearchResult, Track } from "@stm/shared";
-import { chunk } from "../../domain/dedupe";
-import { api, apiJson } from "./api";
-import { trackFromItem, type RawSavedItem } from "./normalize";
+import { SearchResultSchema, type HistoryTrack, type PlaylistContents, type PlaylistEntry, type PlaylistSummary, type SearchResult, type Track } from "@stm/shared";
+import { z } from "zod";
+import { SPOTIFY_API_BASE, type SpotifyApi } from "./api";
+import { RawSavedItemSchema, RawTrackSchema, trackFromItem, type RawSavedItem, type RawTrack } from "./normalize";
 
 // Read/write the user's library through the official Web API. Fetching is paged;
-// mutations are batched at Spotify's 50-id limit. The page-walking loop takes an
+// mutations are batched at Spotify's 40-URI limit. The page-walking loop takes an
 // injectable `pager` so it can be unit-tested without touching the network.
 
 const PAGE_SIZE = 50;
-// `from_token` resolves to the user's own market, which makes the API include the
-// `is_playable` flag we rely on to detect dead tracks.
-const MARKET = "from_token";
+const LIBRARY_UPDATE_LIMIT = 40;
 
-interface Page {
-  items?: RawSavedItem[];
-  next?: string | null;
-}
+const pageSchema = <Item>(item: z.ZodType<Item>) => z.object({
+  items: z.array(item).optional(),
+  next: z.string().nullish(),
+  offset: z.number().int().nonnegative().optional(),
+});
 
-export type Pager = (path: string) => Promise<Page>;
+export type Pager<Item = RawSavedItem | null> =
+  (path: string) => Promise<{ items?: Item[]; next?: string | null; offset?: number }>;
 
-// `next` comes back as an absolute URL; reduce it to the path `apiJson` expects.
-const toPath = (url: string): string => url.replace("https://api.spotify.com/v1", "");
+export const TrackPage = pageSchema(RawSavedItemSchema.nullable());
 
-/** Walk every page from `firstPath`, normalizing and keeping only real, id'd tracks. */
-export async function collect(firstPath: string, pager: Pager = apiJson): Promise<Track[]> {
-  const tracks: Track[] = [];
+async function* pages<Item>(firstPath: string, pager: Pager<Item>) {
   let path: string | null = firstPath;
+  const visited = new Set<string>();
   while (path) {
+    if (visited.has(path)) throw new Error("Spotify 回傳了重複的分頁網址");
+    visited.add(path);
     const page = await pager(path);
-    for (const item of page.items ?? []) {
-      const track = trackFromItem(item);
-      if (track) tracks.push(track);
+    yield page;
+    if (page.next && !page.next.startsWith(`${SPOTIFY_API_BASE}/`)) {
+      throw new Error("Spotify 回傳了無效的分頁網址");
     }
-    path = page.next ? toPath(page.next) : null;
+    path = page.next ? page.next.slice(SPOTIFY_API_BASE.length) : null;
   }
-  return tracks;
 }
 
-/**
- * Drop repeated ids, keeping the first occurrence. Liked Songs are a set keyed by
- * track id, and the whole detect/dedupe/suspects pipeline assumes ids are unique —
- * but Spotify's paging can still hand the same id back twice. A leaked duplicate id
- * collapses inside findConfidentDuplicates (mergeGroups' by-id map) and then crashes
- * findSuspectPairs, so uniqueness is enforced here at the ingestion boundary.
- */
+async function collectEntries(firstPath: string, pager: Pager): Promise<PlaylistContents> {
+  const entries: PlaylistEntry[] = [];
+  let position = 0;
+  let skipped = 0;
+  for await (const page of pages(firstPath, pager)) {
+    position = page.offset ?? position;
+    for (const item of page.items ?? []) {
+      position++;
+      const track = trackFromItem(item);
+      if (track) entries.push({ position, track });
+      else skipped++;
+    }
+  }
+  return { entries, skipped };
+}
+
+export async function collect(firstPath: string, pager: Pager): Promise<Track[]> {
+  const { entries } = await collectEntries(firstPath, pager);
+  return entries.map(({ track }) => track);
+}
+
+/** Liked Songs are a set, but changing the library during paging can repeat an ID. */
 function dedupeById(tracks: Track[]): Track[] {
   const seen = new Set<string>();
   const out: Track[] = [];
@@ -56,45 +70,77 @@ function dedupeById(tracks: Track[]): Track[] {
 }
 
 /** Fetch the user's Liked Songs in full, with each track id guaranteed to appear once. */
-export const fetchSavedTracks = (pager?: Pager): Promise<Track[]> =>
-  collect(`/me/tracks?limit=${PAGE_SIZE}&market=${MARKET}`, pager).then(dedupeById);
+export const fetchSavedTracks = (pager: Pager): Promise<Track[]> =>
+  collect(`/me/tracks?limit=${PAGE_SIZE}`, pager).then(dedupeById);
 
-/** Fetch every track in a playlist. */
-export const fetchPlaylistTracks = (playlistId: string, pager?: Pager): Promise<Track[]> =>
-  collect(
-    `/playlists/${playlistId}/tracks?limit=${PAGE_SIZE}&market=${MARKET}&additional_types=track`,
-    pager,
-  );
+/** Resolve historical entries by their exact Spotify ID, including unsaved tracks. */
+export async function fetchTrackDetails(ids: string[], json: SpotifyApi["json"]): Promise<HistoryTrack[]> {
+  const tracks: HistoryTrack[] = [];
+  const concurrency = 5;
+  for (let start = 0; start < ids.length; start += concurrency) {
+    const batch = await Promise.allSettled(ids.slice(start, start + concurrency).map(async (id) => {
+      const endpoint = `/tracks/${encodeURIComponent(id)}`;
+      const raw = RawTrackSchema.parse(await json(endpoint, { signal: AbortSignal.timeout(5_000) }, { retries429: 1 }));
+      const track = trackFromItem({ track: raw });
+      return track?.id === id && track.name ? track : null;
+    }));
+    for (const item of batch) {
+      if (item.status === "fulfilled" && item.value) tracks.push(item.value);
+    }
+  }
+  return tracks;
+}
 
-async function mutateSaved(method: "DELETE" | "PUT", ids: string[]): Promise<void> {
-  for (const batch of chunk(ids, PAGE_SIZE)) {
-    const res = await api("/me/tracks", {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: batch }),
+const TotalItems = z.object({ total: z.number().int().nonnegative().optional() }).nullish();
+const RawPlaylist = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  items: TotalItems,
+  tracks: TotalItems,
+});
+export const PlaylistsPage = pageSchema(RawPlaylist);
+
+export async function fetchPlaylists(pager: Pager<z.infer<typeof RawPlaylist>>): Promise<PlaylistSummary[]> {
+  const byId = new Map<string, PlaylistSummary>();
+  for await (const page of pages(`/me/playlists?limit=${PAGE_SIZE}`, pager)) {
+    for (const playlist of page.items ?? []) {
+      byId.set(playlist.id, {
+        id: playlist.id,
+        name: playlist.name,
+        itemCount: playlist.items?.total ?? playlist.tracks?.total ?? null,
+      });
+    }
+  }
+  return [...byId.values()];
+}
+
+/** Preserve each occurrence and its original position, even when IDs repeat. */
+export const fetchPlaylistEntries = (playlistId: string, pager: Pager) =>
+  collectEntries(`/playlists/${encodeURIComponent(playlistId)}/items?limit=${PAGE_SIZE}`, pager);
+
+export async function mutateSaved(request: SpotifyApi["request"], method: "DELETE" | "PUT", ids: string[]): Promise<void> {
+  for (let start = 0; start < ids.length; start += LIBRARY_UPDATE_LIMIT) {
+    const batch = ids.slice(start, start + LIBRARY_UPDATE_LIMIT);
+    const params = new URLSearchParams({
+      uris: batch.map((id) => `spotify:track:${id}`).join(","),
     });
-    if (!res.ok) throw new Error(`${method} /me/tracks -> ${res.status}`);
+    const res = await request(`/me/library?${params}`, { method });
+    if (!res.ok) throw new Error(`${method} /me/library → ${res.status}`);
   }
 }
 
-/** Remove saved tracks (the dedupe/cleanup delete path). */
-export const removeSavedTracks = (ids: string[]): Promise<void> => mutateSaved("DELETE", ids);
-
-/** Re-add saved tracks (used to undo a delete batch). */
-export const addSavedTracks = (ids: string[]): Promise<void> => mutateSaved("PUT", ids);
-
-interface RawSearchTrack {
-  id: string;
-  name: string;
-  artists?: { name?: string }[];
-  album?: { name?: string };
-  duration_ms?: number;
-  is_playable?: boolean;
-}
+const SearchPage = z.object({
+  tracks: pageSchema(RawTrackSchema.extend({ id: z.string(), name: z.string() })).optional(),
+});
 
 const SEARCH_LIMIT = 10;
-// Over-fetch so dropping unplayable results doesn't starve the list.
-const SEARCH_OVERFETCH = 20;
+
+function playableSearchResults(items: RawTrack[]) {
+  return items.flatMap((raw) => {
+    const track = trackFromItem({ track: raw });
+    return track?.isPlayable && track.name ? [SearchResultSchema.parse(track)] : [];
+  });
+}
 
 /**
  * Search the catalog for replacement candidates for a dead track. Only playable
@@ -103,34 +149,19 @@ const SEARCH_OVERFETCH = 20;
  */
 export async function searchTracks(
   query: string,
-  fetcher: typeof apiJson = apiJson,
+  fetcher: SpotifyApi["json"],
 ): Promise<SearchResult[]> {
   const params = new URLSearchParams({
     q: query,
     type: "track",
-    market: MARKET,
-    limit: String(SEARCH_OVERFETCH),
+    limit: String(SEARCH_LIMIT),
   });
-  const data = await fetcher<{ tracks?: { items?: RawSearchTrack[] } }>(`/search?${params}`);
-  return (data.tracks?.items ?? [])
-    .filter((t) => t.is_playable !== false)
-    .slice(0, SEARCH_LIMIT)
-    .map((t) => ({
-      id: t.id,
-      name: t.name,
-      artist: (t.artists ?? []).map((a) => a.name ?? "").join(", "),
-      album: t.album?.name ?? "",
-      durationMs: t.duration_ms ?? 0,
-    }));
-}
-
-/** Start playback of a track on the user's active device (requires Premium + an open client). */
-export async function playTrack(trackId: string): Promise<void> {
-  const res = await api("/me/player/play", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ uris: [`spotify:track:${trackId}`] }),
-  });
-  // 204 No Content = playing; 404 = no active device to target.
-  if (!res.ok && res.status !== 204) throw new Error(`play -> ${res.status}`);
+  const data = SearchPage.parse(await fetcher(`/search?${params}`));
+  const tracks = playableSearchResults(data.tracks?.items ?? []);
+  if (tracks.length < SEARCH_LIMIT && data.tracks?.next) {
+    params.set("offset", String(SEARCH_LIMIT));
+    const second = SearchPage.parse(await fetcher(`/search?${params}`));
+    tracks.push(...playableSearchResults(second.tracks?.items ?? []));
+  }
+  return tracks.slice(0, SEARCH_LIMIT);
 }

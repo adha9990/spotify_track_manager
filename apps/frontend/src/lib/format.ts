@@ -13,3 +13,12 @@ export function formatDate(iso: string | null): string {
   if (!iso) return "—";
   return iso.slice(0, 10);
 }
+
+const localDateTime = new Intl.DateTimeFormat("zh-TW", {
+  dateStyle: "short", timeStyle: "short", hourCycle: "h23",
+});
+
+export function formatDateTime(iso: string): string {
+  const time = Date.parse(iso);
+  return Number.isFinite(time) ? localDateTime.format(time) : "—";
+}

@@ -14,9 +14,24 @@ describe("History", () => {
   });
 
   it("records a batch and lists it with the right count", () => {
-    history.record("delete", ["a", "b", "c"], "b1", "2026-01-01T00:00:00Z");
+    const details = { id: "b", name: "Song B", artists: ["One", "Two"], album: "Live" };
+    history.record("delete", ["a", "b", "c"], "b1", "2026-01-01T00:00:00Z", [details]);
     const [batch] = history.list();
     expect(batch).toMatchObject({ batchId: "b1", action: "delete", count: 3, undone: false });
+    expect(batch?.tracks).toEqual([
+      { id: "a", name: null, artists: [], album: "" },
+      details,
+      { id: "c", name: null, artists: [], album: "" },
+    ]);
+  });
+
+  it("fills track names for an existing ID-only batch and preserves its undo payload", () => {
+    history.record("delete", ["a"], "legacy", "2026-01-01T00:00:00Z");
+    const details = { id: "a", name: "Original recording", artists: ["Artist"], album: "Single" };
+    history.rememberTracks([details]);
+    history.rememberTracks([{ ...details, name: "Later title" }]);
+    expect(history.list()[0]?.tracks).toEqual([details]);
+    expect(history.beginUndo("legacy")).toEqual({ action: "delete", trackIds: ["a"] });
   });
 
   it("lists batches newest first", () => {

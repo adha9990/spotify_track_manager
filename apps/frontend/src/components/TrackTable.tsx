@@ -1,20 +1,18 @@
 import type { Track } from "@stm/shared";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef } from "react";
-import { useDeleteTracks, usePlayTrack } from "../hooks/useLibrary";
+import { useRef, useState } from "react";
+import { followingTracks, usePlayTrack } from "../hooks/usePlayback";
 import { formatDate, formatDuration } from "../lib/format";
 import { useUi, type SortKey } from "../store/ui";
-import { Badge, Button, cx, Icon } from "./primitives";
+import { Badge, cx, Icon } from "./primitives";
+import { TrackRemovalDialog, type TrackRemovalTarget } from "./TrackRemovalDialog";
 
-// Virtualized library table. Only ~30 rows are mounted at a time, so toggling
-// selection (which re-renders the table) stays cheap even at 1700+ rows. The grid
-// template is shared between header and rows so columns line up exactly.
+// The header and virtualized rows share one grid template.
 const GRID =
-  "36px 32px minmax(200px,2.4fr) minmax(130px,1.6fr) minmax(120px,1.4fr) 84px 112px 60px 36px";
+  "32px minmax(200px,2.4fr) minmax(130px,1.6fr) minmax(120px,1.4fr) 84px 112px 60px 36px";
 const ROW_HEIGHT = 44;
 
 const COLUMNS: { key: SortKey | null; label: string; align?: "right" }[] = [
-  { key: null, label: "" },
   { key: null, label: "" },
   { key: "name", label: "歌曲" },
   { key: "artist", label: "歌手" },
@@ -46,32 +44,27 @@ function HeaderCell({ col }: { col: (typeof COLUMNS)[number] }) {
   );
 }
 
-function Row({ track }: { track: Track }) {
-  const selected = useUi((s) => s.selected.has(track.id));
-  const toggleSelect = useUi((s) => s.toggleSelect);
-  const play = usePlayTrack();
-  const del = useDeleteTracks();
-
+function Row({ track, canPlay, onPlay, onRemove }: {
+  track: Track;
+  canPlay: boolean;
+  onPlay: () => void;
+  onRemove: (target: TrackRemovalTarget) => void;
+}) {
   return (
     <div
       className={cx(
-        "grid items-center gap-3 border-b border-stone-200/70 px-4 text-sm",
-        selected ? "bg-accent/8" : "hover:bg-stone-100/80",
+        "grid items-center gap-3 border-b border-stone-200/70 px-4 text-sm hover:bg-stone-100/80",
         !track.isPlayable && "opacity-60",
       )}
       style={{ gridTemplateColumns: GRID, height: ROW_HEIGHT }}
     >
-      <input
-        type="checkbox"
-        checked={selected}
-        onChange={() => toggleSelect(track.id)}
-        className="h-4 w-4 accent-[var(--color-accent)]"
-        aria-label="選取"
-      />
       <button
-        onClick={() => play.mutate(track.id)}
+        type="button"
+        disabled={!track.isPlayable || !canPlay}
+        onClick={onPlay}
+        aria-label={`播放 ${track.name || "未命名曲目"}`}
         title="播放"
-        className="flex h-7 w-7 items-center justify-center rounded-full text-stone-500 hover:bg-accent hover:text-white"
+        className="flex h-7 w-7 items-center justify-center rounded-full text-stone-500 enabled:hover:bg-accent enabled:hover:text-white disabled:opacity-40"
       >
         <Icon name="play" className="h-3.5 w-3.5" />
       </button>
@@ -87,9 +80,11 @@ function Row({ track }: { track: Track }) {
       <div className="nums text-right text-stone-500">{formatDate(track.addedAt)}</div>
       <div className="nums text-right text-stone-500">{formatDuration(track.durationMs)}</div>
       <button
-        onClick={() => del.mutate([track.id])}
-        disabled={del.isPending}
-        title="刪除"
+        type="button"
+        onClick={(event) => onRemove({ track, trigger: event.currentTarget })}
+        aria-label={[`從收藏刪除 ${track.name || "未命名曲目"}`, track.album].filter(Boolean).join("，")}
+        aria-haspopup="dialog"
+        title="從收藏刪除"
         className="flex h-7 w-7 items-center justify-center rounded-md text-stone-400 hover:bg-red-50 hover:text-red-700"
       >
         <Icon name="trash" className="h-4 w-4" />
@@ -100,8 +95,8 @@ function Row({ track }: { track: Track }) {
 
 export function TrackTable({ tracks }: { tracks: Track[] }) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const selectMany = useUi((s) => s.selectMany);
-  const selectedCount = useUi((s) => s.selected.size);
+  const [removal, setRemoval] = useState<TrackRemovalTarget | null>(null);
+  const play = usePlayTrack();
 
   const virtualizer = useVirtualizer({
     count: tracks.length,
@@ -110,8 +105,6 @@ export function TrackTable({ tracks }: { tracks: Track[] }) {
     overscan: 12,
   });
 
-  const allVisibleSelected = tracks.length > 0 && selectedCount >= tracks.length;
-
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-stone-200 bg-white/60 shadow-sm">
       {/* Sticky header */}
@@ -119,20 +112,13 @@ export function TrackTable({ tracks }: { tracks: Track[] }) {
         className="grid items-center gap-3 border-b border-stone-300 px-4 py-2.5"
         style={{ gridTemplateColumns: GRID }}
       >
-        <input
-          type="checkbox"
-          checked={allVisibleSelected}
-          onChange={(e) => selectMany(tracks.map((t) => t.id), e.target.checked)}
-          className="h-4 w-4 accent-[var(--color-accent)]"
-          aria-label="全選"
-        />
-        {COLUMNS.slice(1).map((col, i) => (
+        {COLUMNS.map((col, i) => (
           <HeaderCell key={i} col={col} />
         ))}
       </div>
 
       {/* Virtualized body */}
-      <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
+      <div ref={parentRef} tabIndex={-1} className="min-h-0 flex-1 overflow-auto">
         {tracks.length === 0 ? (
           <p className="p-10 text-center text-stone-400">沒有符合的歌曲</p>
         ) : (
@@ -148,12 +134,20 @@ export function TrackTable({ tracks }: { tracks: Track[] }) {
                   transform: `translateY(${vi.start}px)`,
                 }}
               >
-                <Row track={tracks[vi.index]!} />
+                <Row
+                  track={tracks[vi.index]!}
+                  canPlay={play.canPlay && !play.isPending}
+                  onPlay={() => play.mutate(tracks[vi.index]!.id, followingTracks(tracks, vi.index))}
+                  onRemove={setRemoval}
+                />
               </div>
             ))}
           </div>
         )}
       </div>
+      {removal && (
+        <TrackRemovalDialog target={removal} fallbackFocus={parentRef} onClose={() => setRemoval(null)} />
+      )}
     </div>
   );
 }

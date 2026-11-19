@@ -1,59 +1,114 @@
 import type { Track } from "@stm/shared";
-import { useState } from "react";
-import { useDeleteTracks } from "../hooks/useLibrary";
+import { lazy, Suspense, useRef, useState } from "react";
+import type { SavedAlternative } from "../lib/unplayable-tracks";
 import { Button, Icon } from "./primitives";
-import { ReplaceDialog } from "./ReplaceDialog";
+import { TrackRemovalDialog, type TrackRemovalTarget } from "./TrackRemovalDialog";
 
-// Dead (unplayable) tracks, with two ways out: swap in a working version, or just
-// remove the dead entry.
-export function UnplayableView({ tracks }: { tracks: Track[] }) {
+const ReplaceDialog = lazy(async () => ({ default: (await import("./ReplaceDialog")).ReplaceDialog }));
+
+const alternativeLabels: Record<SavedAlternative["match"], string> = {
+  isrc: "相同 ISRC",
+  artist: "同藝人的版本",
+  title: "同名候選",
+};
+
+export function UnplayableView({ unresolved, savedAlternatives }: {
+  unresolved: Track[];
+  savedAlternatives: SavedAlternative[];
+}) {
   const [replacing, setReplacing] = useState<Track | null>(null);
-  const del = useDeleteTracks();
-
-  if (tracks.length === 0) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-stone-400">
-        <Icon name="check" className="h-10 w-10 text-emerald-500" />
-        <p className="text-lg">沒有失效歌曲,收藏全部可播放。</p>
-      </div>
-    );
-  }
+  const [removal, setRemoval] = useState<TrackRemovalTarget | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const rowActions = { onRemove: setRemoval, onReplace: setReplacing };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <p className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-900">
-        這些歌曲在你所在的地區已無法播放(下架或版權變動)。可以尋找可播放的替代版本,或直接移除。
-      </p>
+    <div ref={listRef} tabIndex={-1} className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+      {unresolved.length > 0 ? (
+        <>
+          <p className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-900">
+            這些失效歌曲在收藏中找不到可播放的候選版本。
+          </p>
+          <ul aria-label="待處理的失效歌曲" className="divide-y divide-stone-200/70 overflow-x-auto rounded-lg border border-stone-200 bg-white/60">
+            {unresolved.map((track) => <UnplayableRow key={track.id} track={track} {...rowActions} />)}
+          </ul>
+        </>
+      ) : (
+        <div className="flex items-center gap-2 rounded-lg border border-stone-200 bg-white/60 px-4 py-3 text-sm text-stone-600">
+          <Icon name="check" className="h-5 w-5 text-emerald-500" />
+          沒有待處理的失效歌曲。
+        </div>
+      )}
 
-      <div className="mt-3 min-h-0 flex-1 overflow-auto rounded-lg border border-stone-200 bg-white/60">
-        {tracks.map((track) => (
-          <div
-            key={track.id}
-            className="grid items-center gap-3 border-b border-stone-200/70 px-4 py-2.5 text-sm"
-            style={{ gridTemplateColumns: "minmax(180px,1.8fr) minmax(120px,1.2fr) minmax(120px,1fr) auto" }}
-          >
-            <span className="truncate font-medium">{track.name}</span>
-            <span className="truncate text-stone-500">{track.artists.join(", ")}</span>
-            <span className="truncate text-stone-400">{track.album}</span>
-            <div className="flex justify-end gap-2">
-              <Button size="sm" variant="primary" onClick={() => setReplacing(track)}>
-                <Icon name="swap" className="h-3.5 w-3.5" />
-                尋找替代
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                disabled={del.isPending}
-                onClick={() => del.mutate([track.id])}
-              >
-                移除
-              </Button>
-            </div>
-          </div>
-        ))}
-      </div>
+      {savedAlternatives.length > 0 && (
+        <details className="rounded-lg border border-stone-200 bg-white/60">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-stone-700">
+            收藏中已有可播放候選 · {savedAlternatives.length} 首
+          </summary>
+          <ul aria-label="已有收藏候選的失效歌曲" className="divide-y divide-stone-200/70 overflow-x-auto border-t border-stone-200">
+            {savedAlternatives.map((alternative) => (
+              <UnplayableRow key={alternative.track.id} track={alternative.track} alternative={alternative} {...rowActions} />
+            ))}
+          </ul>
+        </details>
+      )}
 
-      <ReplaceDialog track={replacing} open={replacing !== null} onOpenChange={(o) => !o && setReplacing(null)} />
+      {replacing && (
+        <Suspense fallback={<p role="status" className="text-sm text-stone-600">正在準備替代搜尋…</p>}>
+          <ReplaceDialog key={replacing.id} track={replacing} onClose={() => setReplacing(null)} />
+        </Suspense>
+      )}
+      {removal && (
+        <TrackRemovalDialog target={removal} fallbackFocus={listRef} onClose={() => setRemoval(null)} />
+      )}
     </div>
+  );
+}
+
+function UnplayableRow({ track, alternative, onRemove, onReplace }: {
+  track: Track;
+  alternative?: SavedAlternative;
+  onRemove: (target: TrackRemovalTarget) => void;
+  onReplace: (track: Track) => void;
+}) {
+  return (
+    <li className="grid items-center gap-x-3 gap-y-2 px-4 py-2.5 text-sm [grid-template-columns:minmax(0,1fr)_auto] sm:[grid-template-columns:minmax(0,1.8fr)_minmax(0,1.2fr)_minmax(0,1fr)_auto]">
+      <span className="truncate font-medium">{track.name}</span>
+      <span className="col-start-1 truncate text-stone-500 sm:col-start-auto">{track.artists.join(", ")}</span>
+      <span className="col-start-1 truncate text-stone-400 sm:col-start-auto">{track.album}</span>
+      <div className="col-start-2 row-start-1 row-span-3 flex justify-end gap-2 sm:col-start-4 sm:row-span-1">
+        <Button size="sm" variant="primary" onClick={() => onReplace(track)}>
+          <Icon name="swap" className="h-3.5 w-3.5" />
+          尋找替代
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="danger"
+          aria-label={[`從收藏移除 ${track.name || "未命名曲目"}`, track.album].filter(Boolean).join("，")}
+          aria-haspopup="dialog"
+          onClick={(event) => onRemove({ track, trigger: event.currentTarget })}
+        >
+          移除
+        </Button>
+      </div>
+      {alternative && (
+        <div className="col-span-full border-l-2 border-stone-200 pl-3 text-xs text-stone-600">
+          <p className="font-medium">{alternativeLabels[alternative.match]}</p>
+          <ul className="space-y-1 break-words">
+            {alternative.versions.map((version) => {
+              const edition = [version.artists.join(", "), version.album].filter(Boolean).join(" · ");
+              return (
+                <li key={version.id}>
+                  <a href={`https://open.spotify.com/track/${encodeURIComponent(version.id)}`} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-2">
+                    {version.name}
+                  </a>
+                  {edition && ` · ${edition}`}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </li>
   );
 }

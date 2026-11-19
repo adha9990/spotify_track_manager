@@ -1,38 +1,31 @@
-import { refreshAccessToken } from "./oauth";
+import { refreshAccessToken, type TokenSet } from "./oauth";
 
-// Holds the OAuth access token, refreshed on demand from the refresh token the
-// desktop captured at login (PKCE) and passed via env. Access tokens last ~1h.
-// If Spotify rotates the refresh token, hand it back to the main process (via the
-// fork IPC channel) so it can be re-persisted for the next launch.
+/** Each logged-in session owns its tokens and shares one in-flight refresh. */
+export function createAccessToken(
+  clientId: string,
+  initial: TokenSet,
+  refresh = refreshAccessToken,
+) {
+  let refreshToken = initial.refreshToken;
+  let accessToken = initial.accessToken;
+  let expiresAt = nextExpiry(initial.expiresInSec);
+  let inFlight: Promise<string> | null = null;
 
-let cached: { token: string; expires: number } | null = null;
-let refreshToken: string | undefined = process.env.SPOTIFY_REFRESH_TOKEN || undefined;
-let inFlight: Promise<string> | null = null;
-
-function clientId(): string {
-  const id = process.env.SPOTIFY_CLIENT_ID;
-  if (!id) throw new Error("no SPOTIFY_CLIENT_ID configured");
-  return id;
-}
-
-export async function accessToken(force = false): Promise<string> {
-  if (!refreshToken) throw new Error("no refresh token configured");
-  if (!force && cached && cached.expires > Date.now()) return cached.token;
-  if (force) cached = null;
-  if (!inFlight) {
-    inFlight = refreshAccessToken(clientId(), refreshToken)
-      .then((set) => {
-        // Refresh a minute early so an in-flight call never races the expiry.
-        cached = { token: set.accessToken, expires: Date.now() + (set.expiresInSec - 60) * 1000 };
-        if (set.refreshToken && set.refreshToken !== refreshToken) {
-          refreshToken = set.refreshToken;
-          process.send?.({ type: "refresh_token", value: set.refreshToken });
-        }
-        return set.accessToken;
+  return async (force = false): Promise<string> => {
+    if (!force && Date.now() < expiresAt) return accessToken;
+    if (!refreshToken) throw new Error("請重新連線 Spotify");
+    inFlight ??= refresh(clientId, refreshToken)
+      .then((tokens) => {
+        accessToken = tokens.accessToken;
+        expiresAt = nextExpiry(tokens.expiresInSec);
+        refreshToken = tokens.refreshToken ?? refreshToken;
+        return accessToken;
       })
       .finally(() => {
         inFlight = null;
       });
-  }
-  return inFlight;
+    return inFlight;
+  };
 }
+
+const nextExpiry = (seconds: number) => Date.now() + Math.max(0, seconds - 60) * 1000;

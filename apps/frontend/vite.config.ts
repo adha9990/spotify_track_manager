@@ -6,11 +6,14 @@ const backend = process.env.BACKEND_URL ?? "http://127.0.0.1:8765";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  optimizeDeps: { include: ["opencc-js/t2cn", "idb-keyval"] },
   server: {
-    port: 5173,
+    host: "127.0.0.1",
+    port: 8888,
     strictPort: true,
     proxy: {
       "/api": { target: backend, changeOrigin: true },
+      "/callback": { target: backend, changeOrigin: true },
       "/health": { target: backend, changeOrigin: true },
     },
   },

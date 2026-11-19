@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
-import type { HistoryBatch } from "@stm/shared";
+import { HistoryTrackSchema, type HistoryBatch, type HistoryTrack } from "@stm/shared";
+import { z } from "zod";
 import type { HistoryStore } from "../../ports/history-store";
 
 // A durable op-log so every library mutation can be undone. Each user action is one
@@ -15,13 +16,7 @@ interface BatchRow {
   undone: number;
 }
 
-const toBatch = (r: BatchRow): HistoryBatch => ({
-  batchId: r.batch_id,
-  action: r.action,
-  ts: r.ts,
-  count: (JSON.parse(r.track_ids) as string[]).length,
-  undone: r.undone === 1,
-});
+const trackIdsSchema = z.array(HistoryTrackSchema.shape.id);
 
 export class History implements HistoryStore {
   private db: Database.Database;
@@ -37,22 +32,57 @@ export class History implements HistoryStore {
         track_ids TEXT NOT NULL,
         undone    INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS history_track_details (
+        track_id TEXT PRIMARY KEY,
+        details  TEXT NOT NULL
+      );
     `);
   }
 
   /** Record a completed mutation. `batchId`/`ts` are supplied by the caller (Node's clock). */
-  record(action: "add" | "delete", trackIds: string[], batchId: string, ts: string): void {
-    this.db
-      .prepare("INSERT INTO batches (batch_id, action, ts, track_ids, undone) VALUES (?, ?, ?, ?, 0)")
-      .run(batchId, action, ts, JSON.stringify(trackIds));
+  record(action: "add" | "delete", trackIds: string[], batchId: string, ts: string, tracks: HistoryTrack[] = []): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare("INSERT INTO batches (batch_id, action, ts, track_ids, undone) VALUES (?, ?, ?, ?, 0)")
+        .run(batchId, action, ts, JSON.stringify(trackIds));
+      this.insertDetails(tracks);
+    })();
+  }
+
+  rememberTracks(tracks: HistoryTrack[]): void {
+    this.db.transaction(() => this.insertDetails(tracks))();
+  }
+
+  private insertDetails(tracks: HistoryTrack[]) {
+    const insert = this.db.prepare(`
+      INSERT INTO history_track_details (track_id, details) VALUES (?, ?)
+      ON CONFLICT (track_id) DO NOTHING
+    `);
+    for (const { id, name, artists, album } of tracks) {
+      if (name) insert.run(id, JSON.stringify({ id, name, artists, album }));
+    }
   }
 
   /** All batches, newest first. */
   list(): HistoryBatch[] {
+    const details = this.db.prepare<[], { track_id: string; details: string }>(
+      "SELECT track_id, details FROM history_track_details",
+    ).all();
+    const byId = new Map(details.map((row) => [row.track_id, HistoryTrackSchema.parse(JSON.parse(row.details))]));
     const rows = this.db
-      .prepare("SELECT batch_id, action, ts, track_ids, undone FROM batches ORDER BY ts DESC")
-      .all() as BatchRow[];
-    return rows.map(toBatch);
+      .prepare<[], BatchRow>("SELECT batch_id, action, ts, track_ids, undone FROM batches ORDER BY ts DESC")
+      .all();
+    return rows.map((row) => {
+      const ids = trackIdsSchema.parse(JSON.parse(row.track_ids));
+      return {
+        batchId: row.batch_id,
+        action: row.action,
+        ts: row.ts,
+        count: ids.length,
+        undone: row.undone === 1,
+        tracks: ids.map((id) => byId.get(id) ?? { id, name: null, artists: [], album: "" }),
+      };
+    });
   }
 
   /**
@@ -62,11 +92,13 @@ export class History implements HistoryStore {
    */
   beginUndo(batchId: string): { action: "add" | "delete"; trackIds: string[] } | null {
     const row = this.db
-      .prepare("SELECT action, track_ids, undone FROM batches WHERE batch_id = ?")
-      .get(batchId) as Pick<BatchRow, "action" | "track_ids" | "undone"> | undefined;
+      .prepare<[string], Pick<BatchRow, "action" | "track_ids" | "undone">>(
+        "SELECT action, track_ids, undone FROM batches WHERE batch_id = ?",
+      ).get(batchId);
     if (!row || row.undone === 1) return null;
+    const trackIds = trackIdsSchema.parse(JSON.parse(row.track_ids));
     this.db.prepare("UPDATE batches SET undone = 1 WHERE batch_id = ?").run(batchId);
-    return { action: row.action, trackIds: JSON.parse(row.track_ids) as string[] };
+    return { action: row.action, trackIds };
   }
 
   /** Revert the undone flag — used to roll back if the Spotify reversal fails. */
