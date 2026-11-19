@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 // Small shared building blocks. Kept inline (no UI-kit dependency) so the editorial
 // look stays under our control. `cx` is a trivial className joiner.
@@ -7,7 +7,7 @@ export const cx = (...parts: (string | false | null | undefined)[]) =>
   parts.filter(Boolean).join(" ");
 
 type Variant = "primary" | "outline" | "ghost" | "danger";
-type Size = "sm" | "md";
+type Size = "sm" | "md" | "icon";
 
 const VARIANTS: Record<Variant, string> = {
   primary: "bg-accent text-white hover:brightness-110 active:brightness-95 shadow-sm",
@@ -18,9 +18,10 @@ const VARIANTS: Record<Variant, string> = {
 const SIZES: Record<Size, string> = {
   sm: "h-7 px-2.5 text-xs gap-1.5",
   md: "h-9 px-4 text-sm gap-2",
+  icon: "h-10 w-10",
 };
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+interface ButtonProps extends ComponentProps<"button"> {
   variant?: Variant;
   size?: Size;
 }
@@ -57,6 +58,10 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
 
 const PATHS = {
   play: "M8 5v14l11-7z",
+  pause: "M9 5v14m6-14v14",
+  previous: "M5 5v14m14-14v14L8 12z",
+  next: "M19 5v14M5 5v14l11-7z",
+  volume: "M3 9h4l5-4v14l-5-4H3zm12 0a4 4 0 010 6m2-9a8 8 0 010 12",
   trash: "M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7",
   search: "M21 21l-4.3-4.3M11 18a7 7 0 100-14 7 7 0 000 14z",
   refresh: "M4 12a8 8 0 0114-5.3L20 8M20 4v4h-4M20 12a8 8 0 01-14 5.3L4 16m0 4v-4h4",

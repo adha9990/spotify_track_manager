@@ -1,86 +1,114 @@
+import type { Library, Track } from "@stm/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addTracks,
   deleteTracks,
-  dismissSuspect,
   getHistory,
   getLibrary,
   getStatus,
-  playTrack,
+  logout,
   searchTracks,
   undoBatch,
-  type LibrarySnapshot,
 } from "../api/client";
-import { useUi } from "../store/ui";
+import { replacementQueries } from "../lib/replacements";
+import type { TrackVectorSource } from "../lib/similar-tracks";
 
 const LIBRARY_KEY = ["library"] as const;
 const HISTORY_KEY = ["history"] as const;
 
-/** Poll connection status until connected, then stop. */
 export function useStatus() {
   return useQuery({
     queryKey: ["status"],
     queryFn: getStatus,
-    refetchInterval: (q) => {
-      const data = q.state.data;
-      if (data?.connected) return false;
-      // When rate-limited, poll slowly so we don't keep Spotify's throttle window
-      // full (which would stop it ever clearing); otherwise poll briskly.
-      return data?.error?.includes("429") ? 30000 : 6000;
-    },
   });
 }
 
-/**
- * The library. Fetched once; the backend caches the snapshot. Cross-language suspects
- * are computed in the background, so while `crossLanguagePending` is true we re-fetch
- * the cached snapshot periodically until the pass finishes and merges its pairs in.
- */
+export function useLogout() {
+  return useMutation({ mutationFn: logout, onSuccess: () => window.location.replace("/") });
+}
+
 export function useLibrary(enabled: boolean) {
   return useQuery({
     queryKey: LIBRARY_KEY,
     queryFn: () => getLibrary(false),
     enabled,
     staleTime: Infinity,
-    refetchInterval: (q) => (q.state.data?.crossLanguagePending ? 1500 : false),
   });
 }
 
-/** Catalog search for a dead track's replacement, gated on a non-empty query. */
-export function useSearchTracks(query: string, enabled: boolean) {
+export function useReplacementSearch(track: Track) {
+  const queries = replacementQueries(track);
   return useQuery({
-    queryKey: ["search", query],
-    queryFn: () => searchTracks(query),
-    enabled: enabled && query.trim().length > 0,
+    queryKey: ["replacements", track.id, queries],
+    queryFn: async ({ signal }) => {
+      const searches = await Promise.allSettled(queries.map((query) => searchTracks(query, signal)));
+      const failures = searches.filter((search) => search.status === "rejected").length;
+      if (failures > 0 && failures === searches.length) throw new Error("無法搜尋 Spotify 曲目。");
+      return {
+        tracks: searches.flatMap((search) => search.status === "fulfilled" ? search.value : []),
+        incomplete: failures > 0,
+      };
+    },
+    retry: false,
   });
 }
 
-function useLibraryMutation<TArgs>(fn: (args: TArgs) => Promise<unknown>) {
+export function useReplacementScores(track: TrackVectorSource, candidates: TrackVectorSource[], searchFinished: boolean) {
+  return useQuery({
+    queryKey: ["replacement-scores", track, candidates],
+    queryFn: async () => (await import("../lib/song-vector-index")).scoreTrackCandidates(track, candidates),
+    enabled: searchFinished && candidates.length > 0,
+    retry: false,
+  });
+}
+
+function useLibraryMutation<TArgs>(
+  fn: (args: TArgs) => Promise<unknown>,
+  updateSnapshot?: (library: Library, args: TArgs) => Library,
+) {
   const qc = useQueryClient();
-  const clearSelection = useUi((s) => s.clearSelection);
   return useMutation({
     mutationFn: fn,
-    onSuccess: () => {
-      // Mutations change the library AND append to the history op-log.
-      qc.invalidateQueries({ queryKey: LIBRARY_KEY });
-      qc.invalidateQueries({ queryKey: HISTORY_KEY });
-      clearSelection();
+    onSuccess: async (_, args) => {
+      if (updateSnapshot) {
+        await qc.cancelQueries({ queryKey: LIBRARY_KEY });
+        qc.setQueryData<Library>(LIBRARY_KEY, (library) => library && updateSnapshot(library, args));
+      }
+    },
+    onSettled: (_, error) => {
+      const refresh = Promise.all([
+        qc.invalidateQueries({ queryKey: LIBRARY_KEY }),
+        qc.invalidateQueries({ queryKey: HISTORY_KEY }),
+      ]);
+      // A failed replacement may have already saved the new track. Refresh before retrying.
+      if (error) return refresh;
     },
   });
 }
 
-export const useDeleteTracks = () => useLibraryMutation((ids: string[]) => deleteTracks(ids));
-export const useAddTracks = () => useLibraryMutation((ids: string[]) => addTracks(ids));
+function withoutTrack(library: Library, trackId: string) {
+  return { ...library, tracks: library.tracks.filter(({ id }) => id !== trackId) };
+}
 
-/** Dismiss a suspected-duplicate pair. Not a history op, so it doesn't touch the op-log or selection. */
-export function useDismissSuspect() {
+export const useDeleteTrack = () => useLibraryMutation((id: string) => deleteTracks([id]), withoutTrack);
+
+export function useReplaceTrack() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (pairKey: string) => dismissSuspect(pairKey),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: LIBRARY_KEY });
-    },
-  });
+  return useLibraryMutation(async ({ originalId, replacementId }: { originalId: string; replacementId: string }) => {
+    const saved = qc.getQueryData<Library>(LIBRARY_KEY)?.tracks.some(({ id }) => id === replacementId);
+    if (!saved) {
+      try {
+        await addTracks([replacementId]);
+      } catch {
+        throw new Error("無法將替代版本加入收藏。請重試。");
+      }
+    }
+    try {
+      await deleteTracks([originalId]);
+    } catch {
+      throw new Error("替代版本已在收藏。移除失效歌曲失敗，請重試。");
+    }
+  }, (library, { originalId }) => withoutTrack(library, originalId));
 }
 
 /** The undo op-log, newest first. */
@@ -100,16 +128,11 @@ export function useUndo() {
   });
 }
 
-/** Play is fire-and-forget; it does not touch the library cache. */
-export function usePlayTrack() {
-  return useMutation({ mutationFn: (id: string) => playTrack(id) });
-}
-
-/** Force a fresh fetch + enrichment from Spotify, replacing the cache. */
+/** Force a fresh fetch from Spotify, replacing the cached snapshot. */
 export function useRefreshLibrary() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => getLibrary(true),
-    onSuccess: (data: LibrarySnapshot) => qc.setQueryData(LIBRARY_KEY, data),
+    onSuccess: (data) => qc.setQueryData(LIBRARY_KEY, data),
   });
 }

@@ -8,11 +8,7 @@ out/
 build/
 *.tsbuildinfo
 
-# Electron packaging
-release/
-apps/desktop/build/
-
-# Offline embedding model (large, fetched at build time — see apps/backend/scripts/fetch-model.mjs)
+# Locally downloaded models
 apps/backend/models/
 
 # App data / secrets (never commit)
@@ -23,6 +19,7 @@ apps/backend/models/
 stm_history.db
 .cache
 sp_dc.bin
+spotify_refresh.bin
 
 # Editor / OS
 .DS_Store

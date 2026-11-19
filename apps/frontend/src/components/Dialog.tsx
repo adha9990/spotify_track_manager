@@ -11,6 +11,8 @@ export function Dialog({
   description,
   children,
   width = "max-w-md",
+  showClose = true,
+  onOpenAutoFocus,
   onCloseAutoFocus,
 }: {
   open: boolean;
@@ -19,6 +21,8 @@ export function Dialog({
   description?: ReactNode;
   children?: ReactNode;
   width?: string;
+  showClose?: boolean;
+  onOpenAutoFocus?: (event: Event) => void;
   /** Overrides Radix's default of returning focus to the trigger on close — pass when the
    * trigger may no longer be in the DOM (e.g. the card that opened it just unmounted). */
   onCloseAutoFocus?: (event: Event) => void;
@@ -26,8 +30,9 @@ export function Dialog({
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-40 bg-stone-900/30 backdrop-blur-[2px] data-[state=open]:animate-[fadeIn_120ms_ease]" />
+        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-stone-900/30 backdrop-blur-[2px] data-[state=open]:animate-[fadeIn_120ms_ease]" />
         <RadixDialog.Content
+          onOpenAutoFocus={onOpenAutoFocus}
           onCloseAutoFocus={onCloseAutoFocus}
           className={`fixed left-1/2 top-1/2 z-50 w-[92vw] ${width} -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200 bg-paper p-6 shadow-2xl focus:outline-none`}
         >
@@ -35,9 +40,11 @@ export function Dialog({
             <RadixDialog.Title className="font-display text-xl font-semibold text-ink">
               {title}
             </RadixDialog.Title>
-            <RadixDialog.Close className="rounded-md p-1 text-stone-400 hover:bg-stone-200 hover:text-ink">
-              <Icon name="close" />
-            </RadixDialog.Close>
+            {showClose && (
+              <RadixDialog.Close aria-label="關閉" className="rounded-md p-1 text-stone-400 hover:bg-stone-200 hover:text-ink">
+                <Icon name="close" />
+              </RadixDialog.Close>
+            )}
           </div>
           {description && (
             <RadixDialog.Description className="mt-1 text-sm text-stone-500">

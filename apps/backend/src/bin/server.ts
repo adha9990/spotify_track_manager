@@ -1,59 +1,85 @@
-import { existsSync } from "node:fs";
-import cors from "@fastify/cors";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import cookie from "@fastify/cookie";
+import staticFiles from "@fastify/static";
 import Fastify from "fastify";
-import { Dismissals } from "../adapters/db/dismissals";
-import { Embeddings } from "../adapters/db/embeddings";
 import { History } from "../adapters/db/history";
-import { createLabseGateway } from "../adapters/embedding/labse";
-import { spotifyGateway } from "../adapters/spotify/gateway";
+import { createAccessToken } from "../adapters/spotify/auth";
+import { createSpotifyGateway } from "../adapters/spotify/gateway";
+import { canStream, createAuthorizationUrl, exchangeCode } from "../adapters/spotify/oauth";
+import { registerAuthRoutes } from "../http/auth-routes";
 import { registerRoutes } from "../http/routes";
-import { createLibraryService, type CrossLanguageEmbedding } from "../services/library-service";
+import { createLibraryService } from "../services/library-service";
 
-// Standalone dev: load SPOTIFY_CLIENT_ID from a local apps/backend/.env (gitignored).
-// In the packaged app, Electron passes SPOTIFY_CLIENT_ID and SPOTIFY_REFRESH_TOKEN
-// via the forked process env after the OAuth login flow.
-try {
-  process.loadEnvFile();
-} catch {
-  /* no .env — credentials come from the env */
-}
+const HOST = "127.0.0.1";
+const PUBLIC_CLIENT_ID = "399e9348bd3b411e8e42eb262f66aec7";
+const dev = process.argv.includes("--dev");
+const root = dev ? path.resolve("../..") : process.cwd();
+const envFile = path.join(root, ".env");
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 async function main(): Promise<void> {
-  const app = Fastify({ logger: { level: "info" } });
-  await app.register(cors, { origin: true });
+  const webPort = dev ? 8888 : Number(process.env.PORT ?? 8888);
+  const listenPort = dev ? 8765 : webPort;
+  const origin = `http://${HOST}:${webPort}`;
+  const oauth = {
+    clientId: process.env.SPOTIFY_CLIENT_ID || PUBLIC_CLIENT_ID,
+    redirectUri: `${origin}/callback`,
+  };
+  const webRoot = path.join(root, "apps/frontend/dist");
+  if (!dev && !existsSync(path.join(webRoot, "index.html"))) {
+    throw new Error("找不到網頁建置檔。請先執行 pnpm build。");
+  }
 
-  // Composition root: build the concrete adapters once and inject them into the
-  // routes. This is the only layer that touches adapters; everything inward depends
-  // on ports. Swapping an implementation (e.g. a fake gateway in a test) happens here.
-  const gateway = spotifyGateway;
-  const dbPath = process.env.STM_DB_PATH ?? "stm_history.db";
-  const history = new History(dbPath);
-  const dismissals = new Dismissals(dbPath);
+  const app = Fastify({ logger: { level: "info" }, disableRequestLogging: true });
+  await app.register(cookie);
+  app.addHook("onRequest", async (request, reply) => {
+    // The browser uses the public loopback origin in both dev and built mode.
+    // Vite changes the upstream Host to the backend address when proxying.
+    if (
+      request.headers.host !== `${HOST}:${listenPort}` ||
+      (request.headers.origin && request.headers.origin !== origin)
+    ) {
+      return reply.code(403).send({ error: "請從本機的收藏年鑑網頁連線" });
+    }
+    reply.header("Referrer-Policy", "no-referrer");
+    if (request.url.startsWith("/api/") || request.url.startsWith("/callback")) {
+      reply.header("Cache-Control", "no-store");
+    }
+  });
 
-  // Cross-language duplicate detection is opt-in on a local model being present:
-  // STM_MODEL_PATH is set by the desktop shell (packaged: resources; dev: repo).
-  // Absent → no embedding capability injected → cross-language detection is simply
-  // off (lexical + confident detection unaffected). The gateway itself loads lazily,
-  // so even a set-but-missing model can't crash boot — the service degrades on embed.
-  // Only wire cross-language when the model actually exists on disk. STM_MODEL_PATH is
-  // always set by the desktop shell, so a truthiness check alone would make every user
-  // who never fetched the model attempt (and fail) to load it on each first library
-  // fetch. existsSync makes the capability genuinely opt-in: absent model → cleanly off.
-  const modelPath = process.env.STM_MODEL_PATH;
-  const embed: CrossLanguageEmbedding | undefined =
-    modelPath && existsSync(modelPath)
-      ? { cache: new Embeddings(dbPath), gateway: createLabseGateway({ modelPath }) }
-      : undefined;
+  const dataDir = path.resolve(root, process.env.STM_DATA_DIR || ".cache");
+  const stores = new Map<string, History>();
+  app.addHook("onClose", async () => {
+    for (const history of stores.values()) history.close();
+  });
 
-  const library = createLibraryService(gateway, dismissals, embed);
-  await registerRoutes(app, { library, history, gateway });
-
-  const port = Number(process.env.PORT ?? 8765);
-  await app.listen({ host: "127.0.0.1", port });
-  app.log.info(`backend listening on http://127.0.0.1:${port}`);
+  const sessionFor = registerAuthRoutes(app, {
+    authorizationUrl: (state, challenge) => createAuthorizationUrl(oauth, state, challenge),
+    async connect(code, verifier) {
+      const tokens = await exchangeCode(oauth, code, verifier);
+      const accessToken = createAccessToken(oauth.clientId, tokens);
+      const gateway = createSpotifyGateway(accessToken);
+      const profile = await gateway.getProfile();
+      let history = stores.get(profile.accountId);
+      if (!history) {
+        mkdirSync(dataDir, { recursive: true });
+        const filename = createHash("sha256").update(profile.accountId).digest("hex") + ".db";
+        const db = path.join(dataDir, filename);
+        history = new History(db);
+        stores.set(profile.accountId, history);
+      }
+      const library = createLibraryService(gateway);
+      return { gateway, profile, library, history, webPlaybackToken: canStream(tokens) ? accessToken : null };
+    },
+  });
+  await registerRoutes(app, sessionFor);
+  if (!dev) await app.register(staticFiles, { root: webRoot });
+  await app.listen({ host: HOST, port: listenPort });
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
 });

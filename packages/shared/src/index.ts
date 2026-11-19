@@ -5,6 +5,7 @@ export const TrackSchema = z.object({
   id: z.string(),
   name: z.string(),
   artists: z.array(z.string()),
+  primaryArtistId: z.string().nullish(),
   isrc: z.string().nullable(),
   popularity: z.number().int(),
   isPlayable: z.boolean(),
@@ -16,33 +17,35 @@ export const TrackSchema = z.object({
 });
 export type Track = z.infer<typeof TrackSchema>;
 
-/** One track slated for removal, with the reason it is safe to remove. */
-export const CleanupRemovalSchema = z.object({
-  track: TrackSchema,
-  reason: z.string(),
-});
-export type CleanupRemoval = z.infer<typeof CleanupRemovalSchema>;
-
-/**
- * One confident-duplicate group in the cleanup plan: the copy we keep, plus every
- * copy to remove. Full Track info on both sides so the UI can lay them out
- * side-by-side for human verification. `keep.id` doubles as the stable group key.
- */
-export const CleanupGroupSchema = z.object({
-  keep: TrackSchema,
-  removals: z.array(CleanupRemovalSchema).min(1),
-});
-export type CleanupGroup = z.infer<typeof CleanupGroupSchema>;
-
-/** A simplified search result for finding a replacement track. */
-export const SearchResultSchema = z.object({
+export const PlaylistSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
-  artist: z.string(),
-  album: z.string(),
-  durationMs: z.number().int(),
+  itemCount: z.number().int().nonnegative().nullable(),
+});
+export type PlaylistSummary = z.infer<typeof PlaylistSummarySchema>;
+
+export const PlaylistEntrySchema = z.object({
+  position: z.number().int().positive(),
+  track: TrackSchema,
+});
+export type PlaylistEntry = z.infer<typeof PlaylistEntrySchema>;
+
+export const PlaylistContentsSchema = z.object({
+  entries: z.array(PlaylistEntrySchema),
+  skipped: z.number().int().nonnegative(),
+});
+export type PlaylistContents = z.infer<typeof PlaylistContentsSchema>;
+
+/** Catalog metadata needed to verify a playable replacement. */
+export const SearchResultSchema = TrackSchema.pick({
+  id: true, name: true, artists: true, primaryArtistId: true, isrc: true, album: true, durationMs: true,
 });
 export type SearchResult = z.infer<typeof SearchResultSchema>;
+
+export const HistoryTrackSchema = TrackSchema.pick({ id: true, name: true, artists: true, album: true }).extend({
+  name: z.string().nullable(),
+});
+export type HistoryTrack = z.infer<typeof HistoryTrackSchema>;
 
 /** One batch in the operation history (a single user action). */
 export const HistoryBatchSchema = z.object({
@@ -51,37 +54,82 @@ export const HistoryBatchSchema = z.object({
   ts: z.string(),
   count: z.number().int(),
   undone: z.boolean(),
+  tracks: z.array(HistoryTrackSchema),
 });
 export type HistoryBatch = z.infer<typeof HistoryBatchSchema>;
 
-/**
- * One suspected-duplicate pair surfaced for human review: the copy we'd keep, the
- * copy we'd remove, a stable sorted-id `pairKey` to join UI state across refreshes,
- * a confidence `score`, and the human-readable `hints` that explain the match.
- */
-export const SuspectPairSchema = z.object({
-  keep: TrackSchema,
-  remove: TrackSchema,
-  pairKey: z.string(),
-  score: z.number(),
-  hints: z.array(z.string()),
-});
-export type SuspectPair = z.infer<typeof SuspectPairSchema>;
-
-/** Library snapshot the backend returns to the frontend. */
+/** Snapshot of the user's saved tracks. */
 export const LibrarySchema = z.object({
   tracks: z.array(TrackSchema),
-  cleanup: z.array(CleanupGroupSchema),
-  suspects: z.array(SuspectPairSchema),
-  /**
-   * True while the cross-language (embedding) suspect pass is still running in the
-   * background: the first snapshot returns immediately with lexical/confident results
-   * and `crossLanguagePending: true`, then flips to false once the embedding pass
-   * merges its pairs into `suspects`. The frontend refetches while this is true.
-   */
-  crossLanguagePending: z.boolean(),
+  fetchedAt: z.string(),
 });
 export type Library = z.infer<typeof LibrarySchema>;
 
-export const KeepStrategy = z.enum(["popularity", "oldest"]);
-export type KeepStrategy = z.infer<typeof KeepStrategy>;
+const VolumePercent = z.number().int().min(0).max(100);
+
+export const PlaybackStateSchema = z.object({
+  item: z.object({
+    id: z.string().nullable(),
+    name: z.string(),
+    artists: z.array(z.string()),
+    durationMs: z.number().int().nonnegative(),
+  }).nullable(),
+  device: z.object({
+    id: z.string().nullable(),
+    name: z.string(),
+    volumePercent: VolumePercent.nullable(),
+    supportsVolume: z.boolean(),
+  }),
+  isPlaying: z.boolean(),
+  positionMs: z.number().int().nonnegative(),
+  canPause: z.boolean(),
+  canResume: z.boolean(),
+  canSkipPrevious: z.boolean(),
+  canSkipNext: z.boolean(),
+  canSeek: z.boolean(),
+});
+export type PlaybackState = z.infer<typeof PlaybackStateSchema>;
+
+const DeviceId = z.string().min(1).max(256).nullable();
+
+export const PlaybackCommandSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.enum(["pause", "resume", "previous", "next"]),
+    deviceId: DeviceId,
+  }),
+  z.object({
+    action: z.literal("volume"),
+    deviceId: DeviceId,
+    volumePercent: VolumePercent,
+  }),
+  z.object({
+    action: z.literal("seek"),
+    deviceId: DeviceId,
+    positionMs: z.number().int().nonnegative().safe(),
+  }),
+]);
+export type PlaybackCommand = z.infer<typeof PlaybackCommandSchema>;
+
+export const SpotifyIdSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9]+$/);
+export const MAX_UPCOMING_TRACKS = 99;
+
+export const PlayTrackSchema = z.object({
+  id: SpotifyIdSchema,
+  deviceId: DeviceId.optional(),
+  positionMs: z.number().int().nonnegative().safe().optional(),
+  context: z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("playlist"),
+      playlistId: SpotifyIdSchema,
+      position: z.number().int().positive(),
+    }),
+    z.object({
+      type: z.literal("tracks"),
+      following: z.array(SpotifyIdSchema).max(MAX_UPCOMING_TRACKS),
+    }),
+  ]).optional(),
+});
+export type PlayTrackRequest = z.infer<typeof PlayTrackSchema>;
+export type PlayTrackContext = NonNullable<PlayTrackRequest["context"]>;
+
+export const WebPlaybackTokenSchema = z.object({ accessToken: z.string().min(1) });

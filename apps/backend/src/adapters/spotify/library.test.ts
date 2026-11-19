@@ -1,6 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { collect, fetchSavedTracks, searchTracks, type Pager } from "./library";
-import type { apiJson } from "./api";
+import { describe, expect, it, vi } from "vitest";
+import { collect, fetchPlaylistEntries, fetchPlaylists, fetchSavedTracks, mutateSaved, searchTracks, type Pager } from "./library";
 import type { RawSavedItem } from "./normalize";
 
 const item = (id: string | null): RawSavedItem => ({
@@ -30,10 +29,7 @@ describe("collect / fetchSavedTracks", () => {
   });
 
   it("de-duplicates repeated track ids across pages, keeping the first occurrence", async () => {
-    // Spotify's /me/tracks paging can hand back the same id twice (library changing
-    // mid-walk, or an outright API quirk). Liked Songs are a set keyed by track id,
-    // and the whole duplicate/suspect pipeline assumes ids are unique — a repeated id
-    // otherwise leaks past findConfidentDuplicates into findSuspectPairs and crashes.
+    // Liked Songs are a set even if a library update shifts items between pages.
     const pager = fakePager([
       page([item("1"), item("2")], true),
       page([item("2"), item("3")], false),
@@ -84,12 +80,10 @@ const rawResult = (id: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** Fake apiJson serving a fixed /search payload, recording requested paths. */
-const fakeFetcher = (items: unknown[], seen: string[] = []) =>
-  (async (path: string) => {
-    seen.push(path);
-    return { tracks: { items } };
-  }) as unknown as typeof apiJson;
+const fakeFetcher = (items: unknown[], seen: string[] = []) => async (path: string) => {
+  seen.push(path);
+  return { tracks: { items } };
+};
 
 describe("searchTracks", () => {
   it("filters out unplayable results", async () => {
@@ -125,11 +119,76 @@ describe("searchTracks", () => {
     expect(results.map((r) => r.durationMs)).toEqual([187_000, 0]);
   });
 
-  it("over-fetches 20 from the user's market so filtering can't starve the list", async () => {
+  it("includes the ISRC and primary artist identity for replacement checks", async () => {
+    const results = await searchTracks("isrc:TWABC2000001", fakeFetcher([rawResult("ok", {
+      artists: [{ id: "lead", name: "Lead" }, { id: "guest", name: "Guest" }],
+      external_ids: { isrc: "TWABC2000001" },
+    })]));
+    expect(results[0]).toMatchObject({ primaryArtistId: "lead", artists: ["Lead", "Guest"], isrc: "TWABC2000001" });
+  });
+
+  it("caps the page size at 10 and tries another page after filtering", async () => {
     const seen: string[] = [];
-    await searchTracks("周杰倫 晴天", fakeFetcher([], seen));
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).toContain("limit=20");
-    expect(seen[0]).toContain("market=from_token");
+    const results = await searchTracks("周杰倫 晴天", async (path) => {
+      seen.push(path);
+      return seen.length === 1
+        ? { tracks: { items: [rawResult("dead", { is_playable: false })], next: "next" } }
+        : { tracks: { items: [rawResult("ok")] } };
+    });
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toContain("limit=10");
+    expect(seen[1]).toContain("offset=10");
+    expect(results.map((track) => track.id)).toEqual(["ok"]);
+  });
+});
+
+describe("playlist paging", () => {
+  it("preserves repeated positions and handles both item wrappers across pages", async () => {
+    const next = "https://api.spotify.com/v1/playlists/list123/items?offset=3";
+    const pager = vi.fn<Pager>()
+      .mockResolvedValueOnce({
+        offset: 0,
+        items: [
+          { item: { id: "same", name: "Song", type: "track" } },
+          null,
+          { item: { id: "episode", type: "episode" } },
+        ],
+        next,
+      })
+      .mockResolvedValueOnce({ offset: 3, items: [item("same")], next: null });
+    const contents = await fetchPlaylistEntries("list123", pager);
+    expect(pager.mock.calls.map(([path]) => path)).toEqual([
+      "/playlists/list123/items?limit=50",
+      "/playlists/list123/items?offset=3",
+    ]);
+    expect(contents.entries.map(({ position, track }) => [position, track.id])).toEqual([[1, "same"], [4, "same"]]);
+    expect(contents.skipped).toBe(2);
+  });
+
+  it("lists private, legacy and count-free playlist summaries across pages", async () => {
+    const lists = await fetchPlaylists(async (endpoint) => endpoint.includes("offset=")
+      ? { items: [{ id: "followed", name: "Followed" }] }
+      : {
+        next: "https://api.spotify.com/v1/me/playlists?offset=2",
+        items: [
+          { id: "current", name: "Current", items: { total: 0 } },
+          { id: "legacy", name: "Legacy", tracks: { total: 6 } },
+        ],
+      });
+    expect(lists.map(({ id, itemCount }) => [id, itemCount])).toEqual([
+      ["current", 0], ["legacy", 6], ["followed", null],
+    ]);
+  });
+});
+
+describe("saved track changes", () => {
+  it("uses Spotify track URIs with the current endpoint's 40-item limit", async () => {
+    const request = vi.fn(async (_path: string, _init?: RequestInit) => new Response());
+    await mutateSaved(request, "DELETE", Array.from({ length: 41 }, (_, index) => `t${index}`));
+    expect(request.mock.calls.map(([endpoint, init]) => {
+      const url = new URL(endpoint, "https://api.spotify.com");
+      return [url.pathname, init?.method, url.searchParams.get("uris")?.split(",").length];
+    })).toEqual([["/me/library", "DELETE", 40], ["/me/library", "DELETE", 1]]);
+    expect(request.mock.calls[1]?.[0]).toContain("spotify%3Atrack%3At40");
   });
 });
